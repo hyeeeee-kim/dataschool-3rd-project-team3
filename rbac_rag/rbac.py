@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+
+
 SYSTEM_TO_DOMAINS = {
     "HRIS": ["HR"],
     "PLM": ["R&D/Product"],
