@@ -20,7 +20,7 @@ class RagApiService:
 
     def __init__(self) -> None:
         settings = RagSettings()
-        llm = DatabricksLLM(settings)
+        llm = DatabricksLLM(settings, workspace_client=self._build_workspace_client())
         mappings = TableMappings.build(settings.catalog)
         engine = RagEngine(
             llm=llm,
@@ -39,6 +39,45 @@ class RagApiService:
         self.work_timeout_seconds = int(os.getenv("RAG_WORK_TIMEOUT_SECONDS", "45"))
         # NOTE: shared per-process memory; fine for single-user demo.
         self._memory = ConversationMemory(max_turns=10)
+
+    @staticmethod
+    def _build_workspace_client():
+        from databricks.sdk import WorkspaceClient
+
+        host = os.getenv("DATABRICKS_HOST", "").strip()
+        if not host:
+            server_hostname = os.getenv("DATABRICKS_SERVER_HOSTNAME", "").strip()
+            if server_hostname:
+                host = server_hostname if server_hostname.startswith("http") else f"https://{server_hostname}"
+
+        token = os.getenv("DATABRICKS_TOKEN", "").strip()
+        client_id = os.getenv("DATABRICKS_CLIENT_ID", "").strip()
+        client_secret = os.getenv("DATABRICKS_CLIENT_SECRET", "").strip()
+
+        if host and token:
+            return WorkspaceClient(host=host, token=token)
+        if host and client_id and client_secret:
+            return WorkspaceClient(host=host, client_id=client_id, client_secret=client_secret)
+        if host:
+            return WorkspaceClient(host=host)
+        return WorkspaceClient()
+
+    @staticmethod
+    def _preflight(mode: str) -> str | None:
+        host = os.getenv("DATABRICKS_HOST", "").strip() or os.getenv("DATABRICKS_SERVER_HOSTNAME", "").strip()
+        token = os.getenv("DATABRICKS_TOKEN", "").strip()
+        client_id = os.getenv("DATABRICKS_CLIENT_ID", "").strip()
+        client_secret = os.getenv("DATABRICKS_CLIENT_SECRET", "").strip()
+        http_path = os.getenv("DATABRICKS_HTTP_PATH", "").strip()
+        warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID", "").strip()
+
+        if not host:
+            return "Databricks host is missing. Set DATABRICKS_HOST or DATABRICKS_SERVER_HOSTNAME."
+        if not token and not (client_id and client_secret):
+            return "Databricks credentials are missing. Set DATABRICKS_TOKEN or DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET."
+        if mode == "WORK" and not (http_path or warehouse_id):
+            return "SQL compute is missing. Set DATABRICKS_HTTP_PATH or DATABRICKS_WAREHOUSE_ID."
+        return None
 
     # ------------------------------------------------------------------
     # Public interface expected by app/main.py
@@ -79,7 +118,10 @@ class RagApiService:
                 },
             }
         else:
-            resolved_mode = self.llm.classify_intent(raw)
+            try:
+                resolved_mode = self.llm.classify_intent(raw)
+            except Exception:
+                resolved_mode = "CHAT"
             clean = raw
 
         if not clean:
@@ -95,6 +137,25 @@ class RagApiService:
                     "pre_check": "ERROR",
                     "post_check": "ERROR",
                 },
+            }
+
+        preflight_error = self._preflight("WORK" if resolved_mode == "WORK" else "CHAT")
+        if preflight_error:
+            return {
+                "request_id": "REQ-RAG-CONFIG",
+                "mode": resolved_mode,
+                "answer": preflight_error,
+                "guard_status": "ERROR",
+                "answer_guard_status": "ERROR",
+                "blocked": True,
+                "sources": {"tables": [], "documents": []},
+                "checks": {
+                    "rbac_enabled": rbac_enabled,
+                    "pre_check": "ERROR",
+                    "post_check": "ERROR",
+                },
+                "sql_log": {},
+                "raw": {},
             }
 
         # ── CHAT mode ─────────────────────────────────────────────────

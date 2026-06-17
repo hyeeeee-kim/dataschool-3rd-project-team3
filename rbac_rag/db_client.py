@@ -12,7 +12,12 @@ import pandas as pd
 
 
 def _conn_params() -> dict[str, str]:
-    host = os.getenv("DATABRICKS_HOST", "").strip().rstrip("/").replace("https://", "")
+    host = os.getenv("DATABRICKS_HOST", "").strip()
+    if not host:
+        server_hostname = os.getenv("DATABRICKS_SERVER_HOSTNAME", "").strip()
+        if server_hostname:
+            host = server_hostname if server_hostname.startswith("http") else f"https://{server_hostname}"
+    host = host.rstrip("/").replace("https://", "")
     http_path = os.getenv("DATABRICKS_HTTP_PATH", "").strip()
     warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID", "").strip()
     if not http_path and warehouse_id:
@@ -23,7 +28,7 @@ def _conn_params() -> dict[str, str]:
 
     if not host or not http_path:
         raise RuntimeError(
-            "DATABRICKS_HOST and either DATABRICKS_HTTP_PATH or DATABRICKS_WAREHOUSE_ID must be set"
+            "DATABRICKS_HOST (or DATABRICKS_SERVER_HOSTNAME) and either DATABRICKS_HTTP_PATH or DATABRICKS_WAREHOUSE_ID must be set"
         )
 
     params: dict[str, str] = {"server_hostname": host, "http_path": http_path}

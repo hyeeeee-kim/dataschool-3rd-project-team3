@@ -299,10 +299,15 @@ def normalize_api_sql_log(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def databricks_api_request(path: str, method: str = "GET", body: dict[str, Any] | None = None) -> dict[str, Any]:
-    host = os.getenv("DATABRICKS_HOST", "").strip().rstrip("/")
+    host = os.getenv("DATABRICKS_HOST", "").strip()
+    if not host:
+        server_hostname = os.getenv("DATABRICKS_SERVER_HOSTNAME", "").strip()
+        if server_hostname:
+            host = server_hostname if server_hostname.startswith("http") else f"https://{server_hostname}"
+    host = host.rstrip("/")
     token = os.getenv("DATABRICKS_TOKEN", "").strip()
     if not host or not token:
-        raise RuntimeError("DATABRICKS_HOST and DATABRICKS_TOKEN are required.")
+        raise RuntimeError("DATABRICKS_HOST (or DATABRICKS_SERVER_HOSTNAME) and DATABRICKS_TOKEN are required.")
 
     data = None if body is None else json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
@@ -675,7 +680,9 @@ def backend_status():
         "backend": "in_process_rag",
         "rag_api_url_configured": False,
         "databricks_job_configured": False,
-        "databricks_host_configured": bool(os.getenv("DATABRICKS_HOST", "").strip()),
+        "databricks_host_configured": bool(
+            os.getenv("DATABRICKS_HOST", "").strip() or os.getenv("DATABRICKS_SERVER_HOSTNAME", "").strip()
+        ),
         "databricks_sql_configured": databricks_configured(),
     }
 
