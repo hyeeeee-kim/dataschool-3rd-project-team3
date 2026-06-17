@@ -15,20 +15,23 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from sse_starlette.sse import EventSourceResponse
 
 from rbac_rag.api_service import RagApiService
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+APP_DIR = PROJECT_ROOT / "app"
+TEMPLATES_DIR = APP_DIR / "templates"
+STATIC_DIR = APP_DIR / "static"
 load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(PROJECT_ROOT / "dataschool-3rd-project-team3" / ".env")
 
 app = FastAPI(title="COSBELLE RAG Console")
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 class ChatRequest(BaseModel):
@@ -566,14 +569,14 @@ def payload_to_dict(payload: BaseModel) -> dict[str, Any]:
     return payload.dict()
 
 
-def sse_event(event: str, payload: dict[str, Any]) -> dict[str, str]:
-    return {
-        "event": event,
-        "data": json.dumps(payload, ensure_ascii=False, default=str),
-    }
+def sse_event(event: str, payload: dict[str, Any]) -> str:
+    return (
+        f"event: {event}\n"
+        f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+    )
 
 
-def native_stream_response(payload: RagChatRequest) -> EventSourceResponse:
+def native_stream_response(payload: RagChatRequest) -> StreamingResponse:
     async def event_generator():
         queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
         loop = asyncio.get_running_loop()
@@ -607,10 +610,10 @@ def native_stream_response(payload: RagChatRequest) -> EventSourceResponse:
         except Exception as exc:
             yield sse_event("error", {"status": 502, "detail": safe_error(exc)})
 
-    return EventSourceResponse(event_generator())
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-def ui_stream_response(payload: dict[str, Any], mode: str) -> EventSourceResponse:
+def ui_stream_response(payload: dict[str, Any], mode: str) -> StreamingResponse:
     async def event_generator():
         access = ROLE_ACCESS.get(payload["role_id"], ROLE_ACCESS["GENERAL_EMPLOYEE"])
         queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
@@ -641,23 +644,23 @@ def ui_stream_response(payload: dict[str, Any], mode: str) -> EventSourceRespons
         except Exception as exc:
             yield sse_event("error", {"status": 502, "detail": safe_error(exc)})
 
-    return EventSourceResponse(event_generator())
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/")
 def public_ui():
-    return FileResponse("app/templates/public.html")
+    return FileResponse(TEMPLATES_DIR / "public.html")
 
 
 @app.get("/admin-login")
 def admin_login_ui():
-    return FileResponse("app/templates/login.html")
+    return FileResponse(TEMPLATES_DIR / "login.html")
 
 
 @app.get("/admin")
 @app.get("/ui")
 def admin_ui():
-    return FileResponse("app/templates/admin.html")
+    return FileResponse(TEMPLATES_DIR / "admin.html")
 
 
 @app.get("/health")
@@ -693,7 +696,7 @@ def chat(payload: ChatRequest):
 
 
 @app.post("/api/chat/stream")
-async def chat_stream_ui(payload: ChatRequest) -> EventSourceResponse:
+async def chat_stream_ui(payload: ChatRequest) -> StreamingResponse:
     return ui_stream_response(payload_to_dict(payload), "user")
 
 
@@ -703,7 +706,7 @@ def simulate(payload: SimulateRequest):
 
 
 @app.post("/api/admin/simulate/stream")
-async def simulate_stream(payload: SimulateRequest) -> EventSourceResponse:
+async def simulate_stream(payload: SimulateRequest) -> StreamingResponse:
     return ui_stream_response(payload_to_dict(payload), "admin_simulation")
 
 
@@ -725,7 +728,7 @@ def rag_chat(payload: RagChatRequest) -> dict[str, object]:
 
 
 @app.post("/v1/chat/stream")
-async def rag_chat_stream(payload: RagChatRequest) -> EventSourceResponse:
+async def rag_chat_stream(payload: RagChatRequest) -> StreamingResponse:
     return native_stream_response(payload)
 
 
