@@ -148,29 +148,17 @@ async function simulate() {
     pre_check: payload.pre_check_enabled ? "RUNNING" : "SKIPPED",
     post_check: payload.post_check_enabled ? "WAITING" : "SKIPPED"
   });
-  resultTarget.innerHTML = '<article class="result-card answer"><h3>Running</h3><p>Databricks Job 응답을 기다리는 중입니다.</p></article>';
+  resultTarget.innerHTML = '<article class="result-card answer"><h3>Running</h3><p>요청을 처리하는 중입니다.</p></article>';
 
   try {
-    let finalData = null;
-    let streamError = null;
-
-    await window.CosbelleStream.streamSseJson("/api/admin/simulate/stream", payload, {
-      onEvent: (eventName, eventPayload) => {
-        updateAdminStreamProgress(eventName, eventPayload, payload);
-      },
-      onFinal: (eventPayload) => {
-        finalData = eventPayload;
-      },
-      onError: (eventPayload) => {
-        streamError = eventPayload;
-      }
+    const response = await fetch("/api/admin/simulate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
     });
-
-    if (streamError) {
-      throw new Error(streamError.detail || streamError.message || "Streaming request failed");
-    }
-    if (!finalData) {
-      throw new Error("Streaming request finished without a final response.");
+    const finalData = await parseJsonResponse(response);
+    if (!response.ok) {
+      throw new Error(finalData.detail || finalData.message || `HTTP ${response.status}`);
     }
 
     rememberAdminResponse(finalData, "admin-chat-success");

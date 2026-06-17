@@ -32,27 +32,15 @@ document.getElementById("publicChatForm").addEventListener("submit", async (even
   const progressMessage = appendPublicProgressMessage();
 
   try {
-    let finalData = null;
-    let streamError = null;
-
-    await window.CosbelleStream.streamSseJson("/api/chat/stream", payload, {
-      onEvent: (eventName, eventPayload) => {
-        updatePublicStreamProgress(progressMessage, eventName, eventPayload);
-      },
-      onFinal: (eventPayload) => {
-        finalData = eventPayload;
-      },
-      onError: (eventPayload) => {
-        streamError = eventPayload;
-      }
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
     });
-
+    const finalData = await parseJsonResponse(response);
     progressMessage.remove();
-    if (streamError) {
-      throw new Error(streamError.detail || streamError.message || "Streaming request failed");
-    }
-    if (!finalData) {
-      throw new Error("Streaming request finished without a final response.");
+    if (!response.ok) {
+      throw new Error(finalData.detail || finalData.message || `HTTP ${response.status}`);
     }
 
     renderPublicResponse(finalData, selectedRole);
