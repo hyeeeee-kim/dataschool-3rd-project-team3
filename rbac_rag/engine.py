@@ -14,7 +14,6 @@ class RagEngine:
     def __init__(
         self,
         *,
-        spark: Any,
         llm: DatabricksLLM,
         settings: RagSettings,
         mappings: TableMappings,
@@ -23,7 +22,6 @@ class RagEngine:
         post_check_enabled: bool,
         allowed_domains: list[str] | None,
     ):
-        self.spark = spark
         self.llm = llm
         self.settings = settings
         self.mappings = mappings
@@ -45,17 +43,19 @@ class RagEngine:
         top_k: int | None = None,
         role_id: str | None = None,
         verbose: bool = True,
+        rbac_enabled: bool | None = None,
+        post_check_enabled: bool | None = None,
     ) -> dict[str, Any]:
         top_k = top_k or self.settings.top_k_default
-        use_rbac = self.rbac_enabled
-        use_post_check = self.post_check_enabled
+        use_rbac = rbac_enabled if rbac_enabled is not None else self.rbac_enabled
+        use_post_check = post_check_enabled if post_check_enabled is not None else self.post_check_enabled
         active_role = (role_id or self.selected_role) if use_rbac else None
 
         request_id = str(uuid.uuid4())
         request_time = kst_now()
 
         if use_rbac:
-            domains = get_allowed_domains(self.spark, active_role) if role_id else self.allowed_domains
+            domains = get_allowed_domains(active_role) if role_id else self.allowed_domains
             table_list = self.mappings.get_allowed_table_list(domains) if role_id else self.rbac_table_list
             table_id_mapping = self.mappings.get_table_id_mapping_str(domains)
         else:
@@ -107,7 +107,7 @@ class RagEngine:
                 output["execution_status"] = "BLOCKED"
                 output["permission_check"] = "DENY"
                 output["failure_reason"] = "RBAC_DOMAIN_DENIED"
-                save_rag_log(self.spark, self.settings.log_table, output)
+                save_rag_log(self.settings.log_table, output)
                 if verbose:
                     print(format_output(output))
                 return output
@@ -124,7 +124,7 @@ class RagEngine:
             output["execution_status"] = "BLOCKED"
             output["permission_check"] = "DENY"
             output["failure_reason"] = "NO_SEARCH_RESULT"
-            save_rag_log(self.spark, self.settings.log_table, output)
+            save_rag_log(self.settings.log_table, output)
             if verbose:
                 print(format_output(output))
             return output
@@ -142,12 +142,13 @@ class RagEngine:
         )
         output["sql"] = sql
 
+        from .db_client import run_query_df
+
         query_started = time.perf_counter()
         for attempt in range(2):
             try:
-                df = self.spark.sql(sql)
-                pdf = df.limit(20).toPandas()
-                output["data"] = df
+                pdf = run_query_df(sql).head(20)
+                output["data"] = pdf
                 output["columns_returned"] = list(pdf.columns)
                 output["row_count_returned"] = len(pdf)
                 output["query_runtime_ms"] = int((time.perf_counter() - query_started) * 1000)
@@ -180,7 +181,7 @@ class RagEngine:
                     output["failure_reason"] = "SQL_EXECUTION_ERROR"
                     output["query_runtime_ms"] = int((time.perf_counter() - query_started) * 1000)
                     output["row_count_returned"] = 0
-                    save_rag_log(self.spark, self.settings.log_table, output)
+                    save_rag_log(self.settings.log_table, output)
                     if verbose:
                         print(format_output(output))
                     return output
@@ -203,7 +204,7 @@ class RagEngine:
                 output["permission_check"] = "DENY"
                 output["success_reason"] = "SQL_EXECUTED"
                 output["failure_reason"] = "POST_CHECK_FAILED"
-                save_rag_log(self.spark, self.settings.log_table, output)
+                save_rag_log(self.settings.log_table, output)
                 if verbose:
                     print(format_output(output))
                 return output
@@ -217,7 +218,7 @@ class RagEngine:
             output["success_reason"] = "SQL_EXECUTED"
             output["failure_reason"] = "SUMMARY_GENERATION_ERROR"
             output["detail"] = str(error)[:300]
-            save_rag_log(self.spark, self.settings.log_table, output)
+            save_rag_log(self.settings.log_table, output)
             if verbose:
                 print(format_output(output))
             return output
@@ -232,11 +233,10 @@ class RagEngine:
         output["success_reason"] = "SQL_EXECUTED_AND_RESPONSE_RETURNED"
         output["failure_reason"] = None
 
-        save_rag_log(self.spark, self.settings.log_table, output)
+        save_rag_log(self.settings.log_table, output)
 
         if verbose:
             print(format_output(output))
-            display(df.limit(20))
 
         return output
 
@@ -261,8 +261,7 @@ def get_result(output: dict[str, Any], mode: str = "admin") -> dict[str, Any]:
     if mode == "admin":
         return {key: value for key, value in output.items() if key != "data"}
     if output["status"] == "SUCCESS":
-        return {
-            "answer": output["summary"],
-            "data": output["data"].limit(20).toPandas().to_dict(orient="records") if output["data"] else [],
-        }
+        data = output["data"]
+        records = data.to_dict(orient="records") if data is not None else []
+        return {"answer": output["summary"], "data": records}
     return {"answer": output["detail"] or "요청을 처리할 수 없습니다."}

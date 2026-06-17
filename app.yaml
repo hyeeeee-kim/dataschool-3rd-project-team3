@@ -1,0 +1,19 @@
+command:
+  - uvicorn
+  - app.main:app
+  - --host
+  - "0.0.0.0"
+  - --port
+  - "8000"
+
+env:
+  - name: DATABRICKS_HTTP_PATH
+    valueFrom:
+      secretRef:
+        key: databricks-http-path
+  - name: ADMIN_USERNAME
+    value: "admin"
+  - name: ADMIN_PASSWORD
+    valueFrom:
+      secretRef:
+        key: admin-password

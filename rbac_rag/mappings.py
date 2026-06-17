@@ -11,17 +11,20 @@ class TableMappings:
     table_id_to_fqn: dict[str, str]
 
     @classmethod
-    def build(cls, spark: Any, catalog: str) -> "TableMappings":
-        table_rows = spark.sql(
+    def build(cls, catalog: str) -> "TableMappings":
+        from .db_client import run_query
+
+        table_rows = run_query(
             f"""
-            SELECT table_schema, table_name, CONCAT('{catalog}.', table_schema, '.', table_name) AS fqn
+            SELECT table_schema, table_name,
+                   CONCAT('{catalog}.', table_schema, '.', table_name) AS fqn
             FROM {catalog}.information_schema.tables
             WHERE table_schema != 'information_schema'
             """
-        ).collect()
-        context_rows = spark.sql(
+        )
+        context_rows = run_query(
             "SELECT table_id, layer, domain FROM cos_adb.search.llm_table_context"
-        ).collect()
+        )
 
         domain_to_tables: dict[str, set[str]] = {}
         table_id_to_fqn: dict[str, str] = {}

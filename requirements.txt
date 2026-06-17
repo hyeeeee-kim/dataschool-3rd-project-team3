@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+sse-starlette
+python-dotenv
+pydantic
+databricks-sdk
+databricks-sql-connector
+pandas
