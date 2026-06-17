@@ -4,6 +4,8 @@ RagApiService wraps RagEngine + QueryRouter without requiring spark or dbutils.
 """
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any, Callable
 
 from .engine import RagEngine
@@ -33,6 +35,8 @@ class RagApiService:
         self.llm = llm
         self.engine = engine
         self.settings = settings
+        # Keep this lower than Databricks Apps gateway timeout to avoid raw 504s.
+        self.work_timeout_seconds = int(os.getenv("RAG_WORK_TIMEOUT_SECONDS", "45"))
         # NOTE: shared per-process memory; fine for single-user demo.
         self._memory = ConversationMemory(max_turns=10)
 
@@ -113,14 +117,35 @@ class RagApiService:
             }
 
         # ── WORK mode (RAG + SQL) ─────────────────────────────────────
-        result = self.engine.ask_rag(
-            clean,
-            role_id=role_id,
-            top_k=top_k,
-            verbose=False,
-            rbac_enabled=rbac_enabled,
-            post_check_enabled=post_check,
-        )
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.engine.ask_rag,
+                    clean,
+                    role_id=role_id,
+                    top_k=top_k,
+                    verbose=False,
+                    rbac_enabled=rbac_enabled,
+                    post_check_enabled=post_check,
+                )
+                result = future.result(timeout=self.work_timeout_seconds)
+        except FuturesTimeoutError:
+            return {
+                "request_id": "REQ-RAG-TIMEOUT",
+                "mode": "WORK",
+                "answer": f"요청이 {self.work_timeout_seconds}초를 초과해 중단되었습니다. SQL Warehouse 상태/권한과 Vector Search 권한을 확인해 주세요.",
+                "guard_status": "ERROR",
+                "answer_guard_status": "ERROR",
+                "blocked": True,
+                "sources": {"tables": [], "documents": []},
+                "checks": {
+                    "rbac_enabled": rbac_enabled,
+                    "pre_check": "ERROR",
+                    "post_check": "ERROR",
+                },
+                "sql_log": {},
+                "raw": {},
+            }
         result["mode"] = "WORK"
         status = result.get("status", "UNKNOWN")
         blocked = status in {"DENIED", "BLOCKED", "ERROR"}
