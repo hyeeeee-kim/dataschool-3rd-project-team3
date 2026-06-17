@@ -14,13 +14,16 @@ import pandas as pd
 def _conn_params() -> dict[str, str]:
     host = os.getenv("DATABRICKS_HOST", "").strip().rstrip("/").replace("https://", "")
     http_path = os.getenv("DATABRICKS_HTTP_PATH", "").strip()
+    warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID", "").strip()
+    if not http_path and warehouse_id:
+        http_path = f"/sql/1.0/warehouses/{warehouse_id}"
     token = os.getenv("DATABRICKS_TOKEN", "").strip()
     client_id = os.getenv("DATABRICKS_CLIENT_ID", "").strip()
     client_secret = os.getenv("DATABRICKS_CLIENT_SECRET", "").strip()
 
     if not host or not http_path:
         raise RuntimeError(
-            "DATABRICKS_HOST and DATABRICKS_HTTP_PATH must be set in .env"
+            "DATABRICKS_HOST and either DATABRICKS_HTTP_PATH or DATABRICKS_WAREHOUSE_ID must be set"
         )
 
     params: dict[str, str] = {"server_hostname": host, "http_path": http_path}

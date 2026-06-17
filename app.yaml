@@ -7,13 +7,9 @@ command:
   - "8000"
 
 env:
-  - name: DATABRICKS_HTTP_PATH
-    valueFrom:
-      secretRef:
-        key: databricks-http-path
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql_warehouse
   - name: ADMIN_USERNAME
     value: "admin"
   - name: ADMIN_PASSWORD
-    valueFrom:
-      secretRef:
-        key: admin-password
+    valueFrom: admin_password
