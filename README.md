@@ -23,7 +23,9 @@
 
 ## Security Guardrail (Pre-check / Post-check)
 
-이 프로젝트는 안전한 데이터 접근을 위해 질의 처리 과정에서 두 단계 guardrail이 적용됩니다.
+이 프로젝트는 안전한 데이터 접근을 위해 질의 처리 과정에서 두 단계의 Guardrail이 적용됩니다.
+권한 없는 직원의 불필요한 데이터 조회나, LLM Jailbreak을 통한 보안 취약 요소를 방지하고자 설계된 Guardrail입니다.
+기능은 다음과 같습니다.
 
 - Pre-check
   - 질문과 Role 정보를 기준으로 조회 가능 범위를 먼저 점검합니다.
