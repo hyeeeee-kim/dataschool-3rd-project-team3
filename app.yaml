@@ -7,6 +7,6 @@ command:
   - "$DATABRICKS_APP_PORT"
 env:
   - name: DATABRICKS_SQL_WAREHOUSE_ID
-    value: "REPLACE_WITH_YOUR_WAREHOUSE_ID"
+    valueFrom: sql-warehouse
   - name: DIRECT_SQL_TIMEOUT_SECONDS
     value: "45"
