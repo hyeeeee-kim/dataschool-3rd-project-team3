@@ -1,14 +1,11 @@
-import base64
 import json
 import os
-import time
 import urllib.error
 import urllib.request
 from typing import Any
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from databricks.sdk import WorkspaceClient
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -90,7 +87,6 @@ ROLE_ACCESS = {
 
 RECENT_RESPONSES: list[dict[str, Any]] = []
 RECENT_SQL_LOGS: list[dict[str, Any]] = []
-_DATABRICKS_WORKSPACE_CLIENT: WorkspaceClient | None = None
 
 
 def build_check_result(rbac_enabled: bool, pre_check_enabled: bool, post_check_enabled: bool) -> dict:
@@ -188,168 +184,6 @@ def call_external_rag(payload: dict[str, Any], access: dict[str, Any]) -> dict |
         "checks": raw.get("checks") or build_check_result(body["rbac_enabled"], body["pre_check_enabled"], body["post_check_enabled"]),
         "sql_log": raw.get("sql_log") or raw.get("log") or {},
         "raw": raw,
-    }
-
-
-def get_databricks_workspace_client() -> WorkspaceClient:
-    global _DATABRICKS_WORKSPACE_CLIENT
-    if _DATABRICKS_WORKSPACE_CLIENT is None:
-        _DATABRICKS_WORKSPACE_CLIENT = WorkspaceClient()
-    return _DATABRICKS_WORKSPACE_CLIENT
-
-
-def read_field(value: Any, field: str, default: Any = None) -> Any:
-    if isinstance(value, dict):
-        return value.get(field, default)
-    return getattr(value, field, default)
-
-
-def normalize_enum(value: Any) -> str | None:
-    if value is None:
-        return None
-    if hasattr(value, "value"):
-        return str(value.value)
-    return str(value)
-
-
-def normalize_databricks_error(exc: Exception) -> str:
-    message = str(exc)
-    if "default auth" in message.lower() or "credentials" in message.lower():
-        return (
-            "Databricks authentication failed. In Databricks Apps, grant the app service principal "
-            "permission to run the target Job. For local testing, set DATABRICKS_HOST and DATABRICKS_TOKEN."
-        )
-    return message
-
-
-def parse_notebook_result(raw_result: str) -> dict[str, Any]:
-    try:
-        parsed = json.loads(raw_result)
-    except json.JSONDecodeError:
-        parsed = {"answer": raw_result}
-    return parsed if isinstance(parsed, dict) else {"answer": str(parsed)}
-
-
-def get_notebook_task_run_id(run_state: dict[str, Any], fallback_run_id: int) -> int:
-    tasks = read_field(run_state, "tasks", []) or []
-    if not tasks:
-        return fallback_run_id
-
-    for task in tasks:
-        task_run_id = read_field(task, "run_id")
-        if read_field(task, "notebook_task") is not None and task_run_id is not None:
-            return int(task_run_id)
-
-    for task in tasks:
-        task_run_id = read_field(task, "run_id")
-        if task_run_id is not None:
-            return int(task_run_id)
-
-    return fallback_run_id
-
-
-def get_databricks_run_output_message(run_id: int) -> str:
-    try:
-        output = get_databricks_workspace_client().jobs.get_run_output(run_id=run_id)
-    except Exception as exc:
-        return f"Could not retrieve notebook output: {normalize_databricks_error(exc)}"
-
-    notebook_output = read_field(output, "notebook_output", {}) or {}
-    parts = [
-        read_field(output, "error"),
-        read_field(output, "error_trace"),
-        read_field(notebook_output, "result"),
-        read_field(notebook_output, "truncated"),
-    ]
-    message = "\n".join(str(part) for part in parts if part)
-    return message[:4000] if message else "No notebook output was returned."
-
-
-def call_databricks_job_rag(payload: dict[str, Any], access: dict[str, Any]) -> dict | None:
-    job_id = os.getenv("DATABRICKS_JOB_ID", "").strip()
-    if not job_id:
-        return None
-
-    encoded_question = base64.b64encode(payload["query"].encode("utf-8")).decode("ascii")
-    body = {
-        "job_id": int(job_id),
-        "notebook_params": {
-            "question": "",
-            "question_b64": encoded_question,
-            "question_encoding": "base64_utf8",
-            "role_id": payload["role_id"],
-            "user_role": "",
-            "use_user_role_fallback": "OFF",
-            "rbac_enabled": "ON" if payload.get("rbac_enabled", True) else "OFF",
-            "post_check": "ON" if payload.get("post_check_enabled", True) else "OFF",
-        },
-    }
-
-    try:
-        workspace_client = get_databricks_workspace_client()
-        run_now = workspace_client.jobs.run_now(
-            job_id=int(job_id),
-            notebook_params=body["notebook_params"],
-        )
-        run_id = int(read_field(run_now, "run_id"))
-        output_run_id = run_id
-        max_wait = int(os.getenv("DATABRICKS_JOB_TIMEOUT_SECONDS", "180"))
-        started = time.time()
-
-        while True:
-            run_state = workspace_client.jobs.get_run(run_id=run_id)
-            output_run_id = get_notebook_task_run_id(run_state, run_id)
-            state = read_field(run_state, "state", {}) or {}
-            life_cycle = normalize_enum(read_field(state, "life_cycle_state"))
-            result_state = normalize_enum(read_field(state, "result_state"))
-
-            if life_cycle in {"TERMINATED", "SKIPPED", "INTERNAL_ERROR"}:
-                if result_state != "SUCCESS":
-                    message = read_field(state, "state_message") or result_state or life_cycle
-                    output_message = get_databricks_run_output_message(output_run_id)
-                    raise RuntimeError(f"Databricks job failed: {message}\n{output_message}")
-                break
-
-            if time.time() - started > max_wait:
-                raise TimeoutError(f"Databricks job timed out after {max_wait}s")
-            time.sleep(3)
-
-        output = workspace_client.jobs.get_run_output(run_id=output_run_id)
-        notebook_output = read_field(output, "notebook_output", {}) or {}
-        raw_result = read_field(notebook_output, "result") or ""
-        parsed = parse_notebook_result(raw_result)
-    except Exception as exc:
-        return {
-            "request_id": "REQ-DATABRICKS-JOB-ERROR",
-            "guard_status": "ERROR",
-            "answer_guard_status": "ERROR",
-            "blocked": True,
-            "answer": f"Databricks job connection failed: {normalize_databricks_error(exc)}",
-            "sources": {"tables": [], "documents": []},
-            "checks": {
-                "rbac_enabled": payload.get("rbac_enabled", True),
-                "pre_check": "ERROR",
-                "post_check": "ERROR",
-            },
-        }
-
-    role_id = payload["role_id"]
-    clearance = access["default_clearance"]
-    sources = {"tables": [], "documents": []} if parsed.get("blocked") else normalize_sources(parsed, access["tables"], clearance, role_id)
-    return {
-        "request_id": parsed.get("request_id") or f"RUN-{run_id}",
-        "guard_status": parsed.get("guard_status") or parsed.get("status") or "PASS",
-        "answer_guard_status": parsed.get("answer_guard_status") or parsed.get("post_check") or "PASS",
-        "blocked": bool(parsed.get("blocked", False)),
-        "answer": parsed.get("answer") or parsed.get("response") or parsed.get("summary") or str(parsed),
-        "sources": sources,
-        "checks": parsed.get("checks") or build_check_result(
-            payload.get("rbac_enabled", True),
-            payload.get("pre_check_enabled", True),
-            payload.get("post_check_enabled", True),
-        ),
-        "sql_log": parsed.get("sql_log") or parsed.get("log") or {},
-        "raw": parsed.get("raw") if isinstance(parsed.get("raw"), dict) else parsed,
     }
 
 
