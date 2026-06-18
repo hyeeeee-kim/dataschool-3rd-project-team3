@@ -9,6 +9,9 @@ venv/
 *.png
 *.jpg
 *.jpeg
+!docs/images/*.png
+!docs/images/*.jpg
+!docs/images/*.jpeg
 *.log
 cosbelle-rag-app-deploy/
 cosbelle-rag-app-deploy.zip
