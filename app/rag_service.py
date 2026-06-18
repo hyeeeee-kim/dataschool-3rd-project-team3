@@ -288,7 +288,15 @@ def _load_runtime_metadata(role_id: str, rbac_enabled: bool) -> dict[str, Any]:
         WHERE table_schema != 'information_schema'
         """
     )
-    context_rows = _query_dicts(f"SELECT table_id, layer, domain FROM {CATALOG}.search.llm_table_context")
+    context_rows: list[dict[str, Any]] = []
+    context_available = True
+    context_error = ""
+    try:
+        context_rows = _query_dicts(f"SELECT table_id, layer, domain FROM {CATALOG}.search.llm_table_context")
+    except Exception as error:
+        # Some roles do not have USE SCHEMA on `search`; keep running with a degraded metadata mode.
+        context_available = False
+        context_error = str(error)
 
     domain_to_tables: dict[str, set[str]] = {}
     table_id_to_fqn: dict[str, str] = {}
@@ -328,6 +336,8 @@ def _load_runtime_metadata(role_id: str, rbac_enabled: bool) -> dict[str, Any]:
         "domain_to_tables": domain_to_tables,
         "table_id_to_fqn": table_id_to_fqn,
         "allowed_domains": allowed_domains,
+        "context_available": context_available,
+        "context_error": context_error,
     }
 
 
@@ -396,16 +406,25 @@ def _work_answer(question: str, role_id: str, rbac_enabled: bool, post_check_ena
     context_rows = meta["context_rows"]
     table_rows = meta["table_rows"]
 
-    if rbac_enabled:
+    context_available = bool(meta.get("context_available", True))
+    pre_check_state = "PASS" if rbac_enabled else "SKIPPED"
+
+    if rbac_enabled and context_available:
         domains = meta["allowed_domains"] or []
         table_list = _allowed_table_list(domains, domain_to_tables)
         table_mapping = _table_mapping_str(domains, context_rows, table_id_to_fqn)
+    elif rbac_enabled and not context_available:
+        # Fallback: allow SQL generation with catalog-wide table list when RBAC metadata cannot be loaded.
+        domains = None
+        table_list = "\n".join(f"  - {row.get('fqn', '')}" for row in table_rows)
+        table_mapping = ""
+        pre_check_state = "SKIPPED"
     else:
         domains = None
         table_list = "\n".join(f"  - {row.get('fqn', '')}" for row in table_rows)
         table_mapping = _table_mapping_str(list(domain_to_tables.keys()), context_rows, table_id_to_fqn)
 
-    if rbac_enabled:
+    if rbac_enabled and context_available:
         unfiltered = _search_metadata(question, top_k=3)
         needed = set(str(item[3]) for item in unfiltered) - set(UNIVERSAL_DOMAINS)
         accessible = set(domains or []) - set(UNIVERSAL_DOMAINS)
@@ -437,7 +456,7 @@ def _work_answer(question: str, role_id: str, rbac_enabled: bool, post_check_ena
             "sources": {"tables": [], "documents": []},
             "checks": {
                 "rbac_enabled": rbac_enabled,
-                "pre_check": "BLOCKED" if rbac_enabled else "SKIPPED",
+                    "pre_check": "BLOCKED" if (rbac_enabled and context_available) else pre_check_state,
                 "post_check": "SKIPPED",
             },
             "sql_log": {"request_id": request_id, "status": "DENIED", "blocked": True, "table_name": "-", "sql": ""},
@@ -467,7 +486,7 @@ def _work_answer(question: str, role_id: str, rbac_enabled: bool, post_check_ena
                     "sources": {"tables": [], "documents": []},
                     "checks": {
                         "rbac_enabled": rbac_enabled,
-                        "pre_check": "PASS" if rbac_enabled else "SKIPPED",
+                        "pre_check": pre_check_state,
                         "post_check": "SKIPPED",
                     },
                     "sql_log": {
@@ -497,7 +516,7 @@ def _work_answer(question: str, role_id: str, rbac_enabled: bool, post_check_ena
                 "sources": {"tables": [], "documents": []},
                 "checks": {
                     "rbac_enabled": True,
-                    "pre_check": "PASS",
+                    "pre_check": pre_check_state,
                     "post_check": "BLOCKED",
                 },
                 "sql_log": {
@@ -528,7 +547,7 @@ def _work_answer(question: str, role_id: str, rbac_enabled: bool, post_check_ena
         "sources": {"tables": tables, "documents": []},
         "checks": {
             "rbac_enabled": rbac_enabled,
-            "pre_check": "PASS" if rbac_enabled else "SKIPPED",
+            "pre_check": pre_check_state,
             "post_check": post_status if rbac_enabled else "SKIPPED",
         },
         "sql_log": {
@@ -597,12 +616,18 @@ def call_direct_rag(payload: dict[str, Any], access: dict[str, Any]) -> dict[str
             return _chat_answer(query)
         return _work_answer(query, role_id, rbac_enabled, post_check_enabled)
     except Exception as error:
+        message = str(error)[:500]
+        if "INSUFFICIENT_PERMISSIONS" in message and "USE SCHEMA" in message:
+            message = (
+                "Databricks permission error. Grant USE SCHEMA on `cos_adb.search` and SELECT on "
+                "`cos_adb.search.llm_table_context`, or switch to RAG_API_URL / DATABRICKS_JOB_ID backend."
+            )
         return {
             "request_id": str(uuid.uuid4()),
             "guard_status": "ERROR",
             "answer_guard_status": "ERROR",
             "blocked": True,
-            "answer": f"Direct RAG execution failed: {str(error)[:500]}",
+            "answer": f"Direct RAG execution failed: {message}",
             "sources": {"tables": [], "documents": []},
             "checks": {
                 "rbac_enabled": rbac_enabled,
