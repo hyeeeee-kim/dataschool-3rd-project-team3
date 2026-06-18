@@ -19,12 +19,12 @@ document.getElementById("publicChatForm").addEventListener("submit", async (even
   const selectedRole = getSelectedPublicRole();
   appendPublicMessage("user", "User", question);
   questionInput.value = "";
-  startPublicProgress();
-  const pendingMessage = appendPublicMessage("assistant running", "Assistant", "답변을 생성하고 있습니다.", {
+  const pendingMessage = appendPublicMessage("assistant running pending", "Assistant", "요청을 전송하고 있습니다.", {
     status: "RUNNING",
     role: selectedRole.role_id,
     clearance: selectedRole.default_clearance
   });
+  startPublicProgress(pendingMessage);
   renderPublicSources({});
 
   try {
@@ -237,13 +237,13 @@ function setPublicProgress(message) {
   }
 }
 
-function startPublicProgress() {
+function startPublicProgress(pendingMessage = null) {
   stopPublicProgress();
   const steps = [
     {status: "RUNNING", message: "요청을 Databricks Job으로 전송 중입니다."},
-    {status: "RUNNING", message: "권한과 Role 조건을 확인 중입니다."},
-    {status: "RUNNING", message: "SQL 검색과 근거 테이블을 조회 중입니다."},
-    {status: "RUNNING", message: "LLM 답변을 생성 중입니다."},
+    {status: "RUNNING", message: "선택한 Role 기준으로 권한을 확인 중입니다."},
+    {status: "RUNNING", message: "관련 SQL과 근거 데이터를 검색 중입니다."},
+    {status: "RUNNING", message: "검색 결과를 바탕으로 답변을 생성 중입니다."},
     {status: "RUNNING", message: "답변과 guard 결과를 정리 중입니다."}
   ];
   let index = 0;
@@ -251,6 +251,7 @@ function startPublicProgress() {
     const step = steps[Math.min(index, steps.length - 1)];
     setPublicGuard(step.status, false);
     setPublicProgress(step.message);
+    updatePendingPublicMessage(pendingMessage, step.status, step.message);
     index += 1;
   };
   renderStep();
@@ -339,13 +340,40 @@ function appendPublicMessage(type, label, text, meta = null) {
 function appendMessageElement(message) {
   const messages = document.getElementById("publicMessages");
   messages.appendChild(message);
-  message.scrollIntoView({block: "nearest", behavior: "smooth"});
+  scrollPublicMessagesToBottom();
+  window.requestAnimationFrame(scrollPublicMessagesToBottom);
+}
+
+function scrollPublicMessagesToBottom() {
+  const messages = document.getElementById("publicMessages");
+  if (!messages) {
+    return;
+  }
+  messages.scrollTop = messages.scrollHeight;
 }
 
 function removePendingMessage(message) {
   if (message && message.parentElement) {
     message.remove();
   }
+}
+
+function updatePendingPublicMessage(message, status, text) {
+  if (!message || !message.parentElement) {
+    return;
+  }
+
+  const statusTarget = message.querySelector(".status-pill");
+  if (statusTarget) {
+    statusTarget.textContent = status;
+    statusTarget.className = `status-pill ${getStatusPillClass(status)}`;
+  }
+
+  const textTarget = message.querySelector("p");
+  if (textTarget) {
+    textTarget.textContent = text;
+  }
+  scrollPublicMessagesToBottom();
 }
 
 function getStatusPillClass(status) {

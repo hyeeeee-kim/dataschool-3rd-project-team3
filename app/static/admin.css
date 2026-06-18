@@ -32,6 +32,7 @@ body {
 body.public-body {
   grid-template-columns: 280px 1fr;
   height: 100vh;
+  max-height: 100vh;
   overflow: hidden;
 }
 
@@ -266,6 +267,7 @@ textarea {
 .public-chat {
   height: 100vh;
   min-height: 0;
+  max-height: 100vh;
   min-width: 0;
   padding: 30px 34px 34px 30px;
   background: var(--workspace-bg);
@@ -274,16 +276,24 @@ textarea {
   overflow: hidden;
 }
 
+.public-body .topbar {
+  flex: 0 0 auto;
+}
+
 .user-chat-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: 18px;
   flex: 1;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .chat-main {
   min-height: 0;
+  height: 100%;
+  max-height: 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -293,15 +303,21 @@ textarea {
 
 .public-messages {
   min-width: 0;
+  min-height: 0;
   flex: 1;
   display: grid;
   align-content: start;
   gap: 12px;
   overflow-y: auto;
   overflow-x: hidden;
+  padding-right: 8px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-behavior: smooth;
 }
 
 .chat-composer {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
@@ -1012,6 +1028,11 @@ textarea:focus {
   margin-right: auto;
 }
 
+.chat-message.pending {
+  border-color: #f4dc9a;
+  background: #fffdf6;
+}
+
 .chat-message.blocked {
   border-color: #f3c8cf;
   background: #fff7f8;
@@ -1403,15 +1424,21 @@ textarea:focus {
 @media (max-width: 1320px) {
   body.public-body .user-chat-layout {
     grid-template-columns: 1fr;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
   }
 
   body.public-body .profile-panel {
     position: static;
     order: -1;
+    max-height: 220px;
+    overflow-y: auto;
   }
 
   body.public-body .chat-main {
-    min-height: calc(100vh - 260px);
+    min-height: 0;
+    height: 100%;
   }
 }
 

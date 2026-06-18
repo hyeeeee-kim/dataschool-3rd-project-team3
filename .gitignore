@@ -12,3 +12,4 @@ venv/
 *.log
 cosbelle-rag-app-deploy/
 cosbelle-rag-app-deploy.zip
+cosbelle-rag-app/
