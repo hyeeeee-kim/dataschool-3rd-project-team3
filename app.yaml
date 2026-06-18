@@ -2,14 +2,11 @@ command:
   - uvicorn
   - app.main:app
   - --host
-  - "0.0.0.0"
+  - 0.0.0.0
   - --port
-  - "8000"
-
+  - "$DATABRICKS_APP_PORT"
 env:
-  - name: DATABRICKS_WAREHOUSE_ID
-    valueFrom: sql_warehouse
-  - name: ADMIN_USERNAME
-    value: "admin"
-  - name: ADMIN_PASSWORD
-    valueFrom: admin_password
+  - name: DATABRICKS_SQL_WAREHOUSE_ID
+    value: "REPLACE_WITH_YOUR_WAREHOUSE_ID"
+  - name: DIRECT_SQL_TIMEOUT_SECONDS
+    value: "45"

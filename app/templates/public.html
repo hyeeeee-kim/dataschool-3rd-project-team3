@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>COSBELLE RAG Chat</title>
-  <link rel="stylesheet" href="/static/admin.css" />
+  <link rel="stylesheet" href="/static/admin.css?v=precheck-scroll-status" />
 </head>
 <body class="public-body">
   <aside class="chat-sidebar">
@@ -23,7 +23,7 @@
       <select id="publicRoleSelect">
         <option value="GENERAL_EMPLOYEE">GENERAL_EMPLOYEE</option>
       </select>
-      <p>RBAC / Pre-check / Post-check는 운영 모드로 고정됩니다.</p>
+      <p>Pre-check / Post-check는 운영 모드로 고정됩니다.</p>
     </div>
 
     <a class="admin-link" href="/admin-login">Admin Login</a>
@@ -52,7 +52,7 @@
               rows="3"
               placeholder="질문을 입력하세요. /chat 일반 대화 · /work 데이터 조회 또는 그냥 물어보세요!"
             ></textarea>
-            <p class="composer-hint">예: /chat 오늘 날씨는 어때? · 안녕</p>
+            <p class="composer-hint">예: /chat 안녕 · /work 이번 달 불량률 알려줘 · 안녕</p>
           </div>
           <button class="primary" type="submit">Send</button>
         </form>
@@ -66,13 +66,12 @@
         <div class="guard-card">
           <span>Guard status</span>
           <strong id="publicGuard">READY</strong>
+          <small id="publicProgress">질문을 입력하면 처리 상태가 표시됩니다.</small>
         </div>
-        <div class="source-list" id="publicCitations">반환된 출처 없음</div>
       </aside>
     </section>
   </main>
 
-  <script src="/static/stream.js?v=sse-post"></script>
-  <script src="/static/public.js?v=sse-chat"></script>
+  <script src="/static/public.js?v=precheck-scroll-status"></script>
 </body>
 </html>

@@ -1,4 +1,5 @@
 let publicRoles = [];
+let publicProgressTimer = null;
 
 document.getElementById("publicChatForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -18,35 +19,66 @@ document.getElementById("publicChatForm").addEventListener("submit", async (even
   const selectedRole = getSelectedPublicRole();
   appendPublicMessage("user", "User", question);
   questionInput.value = "";
-  setPublicGuard("RUNNING", false);
+  startPublicProgress();
+  const pendingMessage = appendPublicMessage("assistant running", "Assistant", "답변을 생성하고 있습니다.", {
+    status: "RUNNING",
+    role: selectedRole.role_id,
+    clearance: selectedRole.default_clearance
+  });
   renderPublicSources({});
-
-  const payload = {
-    endpoint: "/api/answer",
-    query: question,
-    role_id: selectedRole.role_id,
-    rbac_enabled: true,
-    pre_check_enabled: true,
-    post_check_enabled: true
-  };
-  const progressMessage = appendPublicProgressMessage();
 
   try {
     const response = await fetch("/api/chat", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        endpoint: "/api/answer",
+        query: question,
+        role_id: selectedRole.role_id,
+        rbac_enabled: true,
+        pre_check_enabled: true,
+        post_check_enabled: true
+      })
     });
-    const finalData = await parseJsonResponse(response);
-    progressMessage.remove();
+
+    const data = await parseJsonResponse(response);
     if (!response.ok) {
-      throw new Error(finalData.detail || finalData.message || `HTTP ${response.status}`);
+      throw new Error(data.detail || data.message || `HTTP ${response.status}`);
     }
 
-    renderPublicResponse(finalData, selectedRole);
+    const identity = data.effective_identity || {
+      role_id: selectedRole.role_id,
+      department_name: selectedRole.department,
+      security_clearance: selectedRole.default_clearance
+    };
+    updatePublicIdentity(identity);
+
+    const resultKind = getResultKind(data);
+    stopPublicProgress();
+    setPublicGuard(resultKind.status, resultKind.kind !== "success");
+    setPublicProgress(resultKind.kind === "success" ? "답변이 완료되었습니다." : "처리가 완료되었습니다.");
+
+    if (resultKind.kind === "blocked") {
+      removePendingMessage(pendingMessage);
+      appendBlockingMessage(data);
+    } else if (resultKind.kind === "error") {
+      removePendingMessage(pendingMessage);
+      appendErrorMessage(data);
+    } else {
+      removePendingMessage(pendingMessage);
+      appendPublicMessage("assistant markdown", "Assistant", data.answer || "", {
+        status: resultKind.status,
+        role: data.role_id || identity.role_id,
+        clearance: data.security_clearance || identity.security_clearance
+      });
+    }
+
+    renderPublicSources(data.sources || {});
   } catch (error) {
-    progressMessage.remove();
+    removePendingMessage(pendingMessage);
+    stopPublicProgress();
     setPublicGuard("ERROR", true);
+    setPublicProgress("오류가 발생했습니다. 관리자 로그를 확인해 주세요.");
     appendErrorMessage({
       answer: `요청 처리 중 오류가 발생했습니다: ${error.message}`,
       role_id: getSelectedPublicRole().role_id,
@@ -64,6 +96,7 @@ document.getElementById("publicRoleSelect").addEventListener("change", () => {
     security_clearance: selectedRole.default_clearance
   });
   setPublicGuard("READY", false);
+  setPublicProgress("질문을 입력하면 처리 상태가 표시됩니다.");
   renderPublicSources({});
 });
 
@@ -79,94 +112,6 @@ async function parseJsonResponse(response) {
   } catch {
     throw new Error(responseText || "Invalid JSON response");
   }
-}
-
-function renderPublicResponse(data, selectedRole) {
-  const identity = data.effective_identity || {
-    role_id: selectedRole.role_id,
-    department_name: selectedRole.department,
-    security_clearance: selectedRole.default_clearance
-  };
-  updatePublicIdentity(identity);
-
-  const resultKind = getResultKind(data);
-  setPublicGuard(resultKind.status, resultKind.kind !== "success");
-
-  if (resultKind.kind === "blocked") {
-    appendBlockingMessage(data);
-  } else if (resultKind.kind === "error") {
-    appendErrorMessage(data);
-  } else {
-    appendPublicMessage("assistant markdown", "Assistant", data.answer || "", {
-      status: resultKind.status,
-      role: data.role_id || identity.role_id,
-      clearance: data.security_clearance || identity.security_clearance
-    });
-  }
-
-  renderPublicSources(data.sources || {});
-}
-
-function appendPublicProgressMessage() {
-  const message = document.createElement("div");
-  message.className = "chat-message assistant streaming";
-  message.innerHTML = `
-    <div class="message-meta">
-      <span>Assistant</span>
-      <strong class="status-pill success">RUNNING</strong>
-    </div>
-    <p>요청을 처리하고 있습니다.</p>
-  `;
-  appendMessageElement(message);
-  return message;
-}
-
-function updatePublicStreamProgress(message, eventName, eventPayload) {
-  if (eventName === "final") {
-    return;
-  }
-
-  const status = streamEventStatus(eventName, eventPayload);
-  setPublicGuard(status, ["BLOCKED", "DENIED", "ERROR"].includes(status));
-
-  const badge = message.querySelector(".status-pill");
-  const body = message.querySelector("p");
-  if (badge) {
-    badge.textContent = status;
-    badge.classList.toggle("error", status === "ERROR");
-    badge.classList.toggle("blocked", ["BLOCKED", "DENIED"].includes(status));
-  }
-  if (body) {
-    body.textContent = describeStreamEvent(eventName, eventPayload);
-  }
-}
-
-function streamEventStatus(eventName, eventPayload) {
-  const payloadStatus = String(eventPayload?.status || "").toUpperCase();
-  if (["BLOCKED", "DENIED", "ERROR"].includes(payloadStatus)) {
-    return payloadStatus;
-  }
-  if (eventName === "error") {
-    return "ERROR";
-  }
-  return "RUNNING";
-}
-
-function describeStreamEvent(eventName, eventPayload) {
-  const labels = {
-    accepted: "요청을 접수했습니다.",
-    intent: `질문 유형을 확인했습니다: ${eventPayload?.mode || "AUTO"}`,
-    rbac: "역할 권한을 확인하고 있습니다.",
-    retrieval: "관련 데이터 컨텍스트를 검색하고 있습니다.",
-    sql_generation: "조회 SQL을 생성하고 있습니다.",
-    sql_validation: "생성 SQL을 검증하고 있습니다.",
-    sql_execution: "Databricks에서 SQL을 실행하고 있습니다.",
-    post_check: "응답 전 권한 검사를 수행하고 있습니다.",
-    summarization: "조회 결과를 답변으로 정리하고 있습니다.",
-    audit: "감사 로그를 기록하고 있습니다.",
-    error: eventPayload?.detail || "스트리밍 처리 중 오류가 발생했습니다."
-  };
-  return labels[eventName] || "요청을 처리하고 있습니다.";
 }
 
 async function loadPublicRoles() {
@@ -211,6 +156,7 @@ function updatePublicIdentity(identity) {
 }
 
 function resetPublicChat() {
+  stopPublicProgress();
   const selectedRole = getSelectedPublicRole();
   document.getElementById("publicMessages").innerHTML = `
     <div class="chat-message assistant">
@@ -224,13 +170,18 @@ function resetPublicChat() {
     security_clearance: selectedRole.default_clearance
   });
   setPublicGuard("READY", false);
+  setPublicProgress("질문을 입력하면 처리 상태가 표시됩니다.");
   renderPublicSources({});
 }
 
 function renderPublicSources(sources) {
+  const target = document.getElementById("publicCitations");
+  if (!target) {
+    return;
+  }
   const tables = Array.isArray(sources.tables) ? sources.tables : [];
   const documents = Array.isArray(sources.documents) ? sources.documents : [];
-  document.getElementById("publicCitations").innerHTML = renderSourceSections(tables, documents);
+  target.innerHTML = renderSourceSections(tables, documents);
 }
 
 function renderSourceSections(tables, documents) {
@@ -277,6 +228,40 @@ function setPublicGuard(status, blocked) {
   guardCard.classList.toggle("blocked", blocked);
   guardCard.classList.toggle("error", ["ERROR", "FAILED", "FAILURE"].includes(normalized));
   guardCard.classList.toggle("running", ["RUNNING", "PENDING", "WAITING"].includes(normalized));
+}
+
+function setPublicProgress(message) {
+  const target = document.getElementById("publicProgress");
+  if (target) {
+    target.textContent = message;
+  }
+}
+
+function startPublicProgress() {
+  stopPublicProgress();
+  const steps = [
+    {status: "RUNNING", message: "요청을 Databricks Job으로 전송 중입니다."},
+    {status: "RUNNING", message: "권한과 Role 조건을 확인 중입니다."},
+    {status: "RUNNING", message: "SQL 검색과 근거 테이블을 조회 중입니다."},
+    {status: "RUNNING", message: "LLM 답변을 생성 중입니다."},
+    {status: "RUNNING", message: "답변과 guard 결과를 정리 중입니다."}
+  ];
+  let index = 0;
+  const renderStep = () => {
+    const step = steps[Math.min(index, steps.length - 1)];
+    setPublicGuard(step.status, false);
+    setPublicProgress(step.message);
+    index += 1;
+  };
+  renderStep();
+  publicProgressTimer = window.setInterval(renderStep, 4500);
+}
+
+function stopPublicProgress() {
+  if (publicProgressTimer) {
+    window.clearInterval(publicProgressTimer);
+    publicProgressTimer = null;
+  }
 }
 
 function appendBlockingMessage(data) {
@@ -341,19 +326,40 @@ function appendPublicMessage(type, label, text, meta = null) {
     ? `
       <div class="message-meta">
         <span>${escapeHtml(label)}</span>
-        <strong class="status-pill success">${escapeHtml(meta.status || "PASS")}</strong>
+        <strong class="status-pill ${getStatusPillClass(meta.status)}">${escapeHtml(meta.status || "PASS")}</strong>
         <small>${escapeHtml([meta.role, meta.clearance].filter(Boolean).join(" / "))}</small>
       </div>
     `
     : `<span>${escapeHtml(label)}</span>`;
   message.innerHTML = `${metaHtml}${body}`;
   appendMessageElement(message);
+  return message;
 }
 
 function appendMessageElement(message) {
   const messages = document.getElementById("publicMessages");
   messages.appendChild(message);
   message.scrollIntoView({block: "nearest", behavior: "smooth"});
+}
+
+function removePendingMessage(message) {
+  if (message && message.parentElement) {
+    message.remove();
+  }
+}
+
+function getStatusPillClass(status) {
+  const normalized = String(status || "").toUpperCase();
+  if (["BLOCKED", "DENIED"].includes(normalized)) {
+    return "blocked";
+  }
+  if (["ERROR", "FAILED", "FAILURE"].includes(normalized)) {
+    return "error";
+  }
+  if (["RUNNING", "PENDING", "WAITING"].includes(normalized)) {
+    return "running";
+  }
+  return "success";
 }
 
 function renderAnswer(value) {
@@ -438,8 +444,14 @@ function renderMarkdownTable(tableLines) {
     return "";
   }
 
-  const headers = rows[0];
-  const bodyRows = rows.slice(1);
+  const columnCount = Math.max(...rows.map((row) => row.length));
+  const headers = normalizeTableRow(rows[0], columnCount).map((cell, index) => {
+    if (cell) {
+      return cell;
+    }
+    return `항목 ${index + 1}`;
+  });
+  const bodyRows = rows.slice(1).map((row) => normalizeTableRow(row, columnCount));
   return `
     <div class="answer-table-wrap">
       <table class="answer-table">
@@ -450,6 +462,14 @@ function renderMarkdownTable(tableLines) {
       </table>
     </div>
   `;
+}
+
+function normalizeTableRow(row, columnCount) {
+  const normalized = [...row];
+  while (normalized.length < columnCount) {
+    normalized.push("");
+  }
+  return normalized.slice(0, columnCount);
 }
 
 function formatDocument(doc) {

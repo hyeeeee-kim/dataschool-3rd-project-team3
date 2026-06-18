@@ -31,6 +31,8 @@ body {
 
 body.public-body {
   grid-template-columns: 280px 1fr;
+  height: 100vh;
+  overflow: hidden;
 }
 
 body.login-body {
@@ -57,7 +59,9 @@ textarea {
 }
 
 .chat-sidebar {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
+  overflow-y: auto;
   padding: 30px 20px;
   background: var(--sidebar-bg);
   border-right: 1px solid #cfd6e4;
@@ -260,24 +264,31 @@ textarea {
 }
 
 .public-chat {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   min-width: 0;
   padding: 30px 34px 34px 30px;
   background: var(--workspace-bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .user-chat-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: 18px;
+  flex: 1;
+  min-height: 0;
 }
 
 .chat-main {
-  min-height: 640px;
+  min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  overflow: hidden;
 }
 
 .public-messages {
@@ -664,6 +675,7 @@ textarea {
 }
 
 .answer-table-wrap {
+  width: fit-content;
   max-width: 100%;
   margin: 14px 0 20px;
   overflow-x: auto;
@@ -673,8 +685,8 @@ textarea {
 }
 
 .answer-table {
-  width: 100%;
-  min-width: 760px;
+  width: max-content;
+  min-width: min(760px, 100%);
   border-collapse: collapse;
   font-size: 14px;
 }
@@ -685,7 +697,11 @@ textarea {
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
-  white-space: nowrap;
+  min-width: 120px;
+  max-width: 320px;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .answer-table th {
@@ -833,11 +849,24 @@ textarea:focus {
   font-size: 28px;
 }
 
+.guard-card small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .toggle-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-top: 16px;
+}
+
+.toggle-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .toggle-row {
@@ -900,8 +929,37 @@ textarea:focus {
   grid-template-columns: 1fr 1fr 0.8fr;
 }
 
-.result-card.answer {
+.result-card.answer,
+.result-card.question {
   grid-column: span 3;
+}
+
+.result-card.question {
+  background: #f8f9fd;
+  box-shadow: none;
+}
+
+.result-card.question p {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.progress-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 14px;
+}
+
+.progress-steps span {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: #fff7df;
+  color: #9a5b00;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .source-list {
@@ -1009,6 +1067,11 @@ textarea:focus {
   color: #b24a5a;
 }
 
+.status-pill.running {
+  background: #fff7df;
+  color: #9a5b00;
+}
+
 .blocking-message strong,
 .blocking-message p,
 .blocking-message small {
@@ -1093,6 +1156,11 @@ textarea:focus {
 .badge.yellow {
   background: #fff7df;
   color: #9a5b00;
+}
+
+.badge.neutral {
+  background: #eef2f7;
+  color: #526179;
 }
 
 .metrics {

@@ -1,37 +1,26 @@
-import asyncio
 import base64
 import json
 import os
-import re
 import time
 import urllib.error
 import urllib.request
-from functools import lru_cache
-from pathlib import Path
-from typing import Literal
 from typing import Any
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException
+from databricks.sdk import WorkspaceClient
+from fastapi import FastAPI
 from fastapi.responses import FileResponse
-from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from app.rag_service import call_direct_rag, direct_backend_configured
 
-from rbac_rag.api_service import RagApiService
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-APP_DIR = PROJECT_ROOT / "app"
-TEMPLATES_DIR = APP_DIR / "templates"
-STATIC_DIR = APP_DIR / "static"
-load_dotenv(PROJECT_ROOT / ".env")
-load_dotenv(PROJECT_ROOT / "dataschool-3rd-project-team3" / ".env")
+load_dotenv()
 
 app = FastAPI(title="COSBELLE RAG Console")
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 class ChatRequest(BaseModel):
@@ -56,15 +45,6 @@ class SimulateRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
-
-
-class RagChatRequest(BaseModel):
-    question: str = Field(..., min_length=1)
-    role_id: str = Field(..., min_length=1)
-    mode: Literal["auto", "chat", "work"] = "auto"
-    rbac_enabled: bool = True
-    post_check: bool = True
-    top_k: int | None = Field(default=None, ge=1, le=20)
 
 
 ROLE_ROWS = [
@@ -110,35 +90,7 @@ ROLE_ACCESS = {
 
 RECENT_RESPONSES: list[dict[str, Any]] = []
 RECENT_SQL_LOGS: list[dict[str, Any]] = []
-
-
-@lru_cache(maxsize=1)
-def get_rag_service() -> RagApiService:
-    return RagApiService()
-
-
-def databricks_configured() -> bool:
-    has_host = bool(os.getenv("DATABRICKS_SERVER_HOSTNAME") or os.getenv("DATABRICKS_HOST"))
-    has_sql_compute = bool(os.getenv("DATABRICKS_HTTP_PATH") or os.getenv("DATABRICKS_WAREHOUSE_ID"))
-    has_credentials = bool(
-        (os.getenv("DATABRICKS_CLIENT_ID") and os.getenv("DATABRICKS_CLIENT_SECRET"))
-        or os.getenv("DATABRICKS_TOKEN")
-    )
-    return bool(
-        has_host
-        and has_sql_compute
-        and has_credentials
-    )
-
-
-def safe_error(error: Exception) -> str:
-    message = str(error).strip() or error.__class__.__name__
-    for key in ("DATABRICKS_TOKEN", "DATABRICKS_CLIENT_SECRET", "RAG_API_TOKEN"):
-        value = os.getenv(key, "").strip()
-        if value:
-            message = message.replace(value, "[REDACTED]")
-    message = re.sub(r"Bearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", message, flags=re.IGNORECASE)
-    return message[:300]
+_DATABRICKS_WORKSPACE_CLIENT: WorkspaceClient | None = None
 
 
 def build_check_result(rbac_enabled: bool, pre_check_enabled: bool, post_check_enabled: bool) -> dict:
@@ -208,124 +160,97 @@ def normalize_sources(raw: dict[str, Any], fallback_tables: list[str], fallback_
     return {"tables": tables, "documents": normalized_docs}
 
 
-def execute_rag_chat(
-    payload: dict[str, Any],
-    *,
-    event_callback=None,
-    top_k: int | None = None,
-) -> dict[str, Any]:
-    return get_rag_service().chat(
-        question=payload["query"],
-        role_id=payload["role_id"],
-        mode=payload.get("mode", "auto"),
-        rbac_enabled=coerce_bool(payload.get("rbac_enabled", True)),
-        post_check=coerce_bool(payload.get("post_check_enabled", payload.get("post_check", True))),
-        top_k=top_k,
-        event_callback=event_callback,
+def call_external_rag(payload: dict[str, Any], access: dict[str, Any]) -> dict | None:
+    rag_api_url = os.getenv("RAG_API_URL", "").strip()
+    if not rag_api_url:
+        return None
+
+    body = {
+        "query": payload["query"],
+        "question": payload["query"],
+        "role_id": payload["role_id"],
+        "department_name": payload.get("department_name") or access["department"],
+        "security_clearance": payload.get("security_clearance") or access["default_clearance"],
+        "rbac_enabled": payload.get("rbac_enabled", True),
+        "pre_check_enabled": payload.get("pre_check_enabled", True),
+        "post_check_enabled": payload.get("post_check_enabled", True),
+    }
+    headers = {"Content-Type": "application/json"}
+    token = os.getenv("RAG_API_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    request = urllib.request.Request(
+        rag_api_url,
+        data=json.dumps(body).encode("utf-8"),
+        headers=headers,
+        method="POST",
     )
+    timeout = float(os.getenv("RAG_TIMEOUT_SECONDS", "60"))
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return {
+            "request_id": "REQ-RAG-ERROR",
+            "guard_status": "ERROR",
+            "answer_guard_status": "ERROR",
+            "blocked": True,
+            "answer": f"RAG API connection failed: {exc}",
+            "sources": {"tables": [], "documents": []},
+            "checks": {
+                "rbac_enabled": body["rbac_enabled"],
+                "pre_check": "ERROR",
+                "post_check": "ERROR",
+            },
+        }
 
-
-def coerce_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() not in {"false", "0", "off", "no", "n", ""}
-    return bool(value)
-
-
-def format_rag_api_result(raw: dict[str, Any], payload: dict[str, Any], access: dict[str, Any]) -> dict:
     role_id = payload["role_id"]
     clearance = access["default_clearance"]
     blocked = bool(raw.get("blocked", False))
-    raw_checks = raw.get("checks") if isinstance(raw.get("checks"), dict) else {}
     sources = {"tables": [], "documents": []} if blocked else normalize_sources(raw, access["tables"], clearance, role_id)
     return {
         "request_id": raw.get("request_id") or raw.get("id") or "REQ-RAG-LIVE",
         "guard_status": raw.get("guard_status") or raw.get("status") or "PASS",
-        "answer_guard_status": (
-            raw.get("answer_guard_status")
-            or raw.get("post_check")
-            or raw_checks.get("post_check")
-            or "PASS"
-        ),
+        "answer_guard_status": raw.get("answer_guard_status") or raw.get("post_check") or "PASS",
         "blocked": blocked,
         "answer": raw.get("answer") or raw.get("response") or raw.get("summary") or "",
         "sources": sources,
-        "checks": raw_checks or build_check_result(
-            coerce_bool(payload.get("rbac_enabled", True)),
-            coerce_bool(payload.get("pre_check_enabled", True)),
-            coerce_bool(payload.get("post_check_enabled", payload.get("post_check", True))),
-        ),
-        "sql_log": raw.get("sql_log") or raw.get("log") or normalize_api_sql_log(raw),
+        "checks": raw.get("checks") or build_check_result(body["rbac_enabled"], body["pre_check_enabled"], body["post_check_enabled"]),
+        "sql_log": raw.get("sql_log") or raw.get("log") or {},
         "raw": raw,
     }
 
 
-def call_in_process_rag(payload: dict[str, Any], access: dict[str, Any]) -> dict:
-    try:
-        raw = execute_rag_chat(payload)
-        return format_rag_api_result(raw, payload, access)
-    except ValueError as exc:
-        return build_error_result(payload, f"RAG request rejected: {safe_error(exc)}")
-    except Exception as exc:
-        return build_error_result(payload, f"RAG execution failed: {safe_error(exc)}")
+def get_databricks_workspace_client() -> WorkspaceClient:
+    global _DATABRICKS_WORKSPACE_CLIENT
+    if _DATABRICKS_WORKSPACE_CLIENT is None:
+        _DATABRICKS_WORKSPACE_CLIENT = WorkspaceClient()
+    return _DATABRICKS_WORKSPACE_CLIENT
 
 
-def build_error_result(payload: dict[str, Any], message: str) -> dict:
-    return {
-        "request_id": "REQ-RAG-ERROR",
-        "guard_status": "ERROR",
-        "answer_guard_status": "ERROR",
-        "blocked": True,
-        "answer": message,
-        "sources": {"tables": [], "documents": []},
-        "checks": {
-            "rbac_enabled": payload.get("rbac_enabled", True),
-            "pre_check": "ERROR",
-            "post_check": "ERROR",
-        },
-        "raw": {},
-    }
+def read_field(value: Any, field: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(field, default)
+    return getattr(value, field, default)
 
 
-def normalize_api_sql_log(raw: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "request_id": raw.get("request_id"),
-        "query_time": (raw.get("raw") or {}).get("query_time") if isinstance(raw.get("raw"), dict) else None,
-        "generated_sql": raw.get("generated_sql"),
-        "row_count_returned": raw.get("row_count"),
-        "columns": raw.get("columns") or [],
-    }
+def normalize_enum(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "value"):
+        return str(value.value)
+    return str(value)
 
 
-def databricks_api_request(path: str, method: str = "GET", body: dict[str, Any] | None = None) -> dict[str, Any]:
-    host = os.getenv("DATABRICKS_HOST", "").strip()
-    if not host:
-        server_hostname = os.getenv("DATABRICKS_SERVER_HOSTNAME", "").strip()
-        if server_hostname:
-            host = server_hostname if server_hostname.startswith("http") else f"https://{server_hostname}"
-    host = host.rstrip("/")
-    token = os.getenv("DATABRICKS_TOKEN", "").strip()
-    if not host or not token:
-        raise RuntimeError("DATABRICKS_HOST (or DATABRICKS_SERVER_HOSTNAME) and DATABRICKS_TOKEN are required.")
-
-    data = None if body is None else json.dumps(body).encode("utf-8")
-    request = urllib.request.Request(
-        f"{host}{path}",
-        data=data,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        method=method,
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            content = response.read().decode("utf-8")
-            return json.loads(content) if content else {}
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Databricks API HTTP {exc.code}: {detail}") from exc
+def normalize_databricks_error(exc: Exception) -> str:
+    message = str(exc)
+    if "default auth" in message.lower() or "credentials" in message.lower():
+        return (
+            "Databricks authentication failed. In Databricks Apps, grant the app service principal "
+            "permission to run the target Job. For local testing, set DATABRICKS_HOST and DATABRICKS_TOKEN."
+        )
+    return message
 
 
 def parse_notebook_result(raw_result: str) -> dict[str, Any]:
@@ -337,33 +262,35 @@ def parse_notebook_result(raw_result: str) -> dict[str, Any]:
 
 
 def get_notebook_task_run_id(run_state: dict[str, Any], fallback_run_id: int) -> int:
-    tasks = run_state.get("tasks") or []
+    tasks = read_field(run_state, "tasks", []) or []
     if not tasks:
         return fallback_run_id
 
     for task in tasks:
-        if task.get("notebook_task") is not None and task.get("run_id") is not None:
-            return int(task["run_id"])
+        task_run_id = read_field(task, "run_id")
+        if read_field(task, "notebook_task") is not None and task_run_id is not None:
+            return int(task_run_id)
 
     for task in tasks:
-        if task.get("run_id") is not None:
-            return int(task["run_id"])
+        task_run_id = read_field(task, "run_id")
+        if task_run_id is not None:
+            return int(task_run_id)
 
     return fallback_run_id
 
 
 def get_databricks_run_output_message(run_id: int) -> str:
     try:
-        output = databricks_api_request(f"/api/2.1/jobs/runs/get-output?run_id={run_id}")
+        output = get_databricks_workspace_client().jobs.get_run_output(run_id=run_id)
     except Exception as exc:
-        return f"Could not retrieve notebook output: {exc}"
+        return f"Could not retrieve notebook output: {normalize_databricks_error(exc)}"
 
-    notebook_output = output.get("notebook_output") or {}
+    notebook_output = read_field(output, "notebook_output", {}) or {}
     parts = [
-        output.get("error"),
-        output.get("error_trace"),
-        notebook_output.get("result"),
-        notebook_output.get("truncated"),
+        read_field(output, "error"),
+        read_field(output, "error_trace"),
+        read_field(notebook_output, "result"),
+        read_field(notebook_output, "truncated"),
     ]
     message = "\n".join(str(part) for part in parts if part)
     return message[:4000] if message else "No notebook output was returned."
@@ -382,28 +309,34 @@ def call_databricks_job_rag(payload: dict[str, Any], access: dict[str, Any]) -> 
             "question_b64": encoded_question,
             "question_encoding": "base64_utf8",
             "role_id": payload["role_id"],
+            "user_role": "",
+            "use_user_role_fallback": "OFF",
             "rbac_enabled": "ON" if payload.get("rbac_enabled", True) else "OFF",
             "post_check": "ON" if payload.get("post_check_enabled", True) else "OFF",
         },
     }
 
     try:
-        run_now = databricks_api_request("/api/2.1/jobs/run-now", method="POST", body=body)
-        run_id = run_now["run_id"]
+        workspace_client = get_databricks_workspace_client()
+        run_now = workspace_client.jobs.run_now(
+            job_id=int(job_id),
+            notebook_params=body["notebook_params"],
+        )
+        run_id = int(read_field(run_now, "run_id"))
         output_run_id = run_id
         max_wait = int(os.getenv("DATABRICKS_JOB_TIMEOUT_SECONDS", "180"))
         started = time.time()
 
         while True:
-            run_state = databricks_api_request(f"/api/2.1/jobs/runs/get?run_id={run_id}")
+            run_state = workspace_client.jobs.get_run(run_id=run_id)
             output_run_id = get_notebook_task_run_id(run_state, run_id)
-            state = run_state.get("state", {})
-            life_cycle = state.get("life_cycle_state")
-            result_state = state.get("result_state")
+            state = read_field(run_state, "state", {}) or {}
+            life_cycle = normalize_enum(read_field(state, "life_cycle_state"))
+            result_state = normalize_enum(read_field(state, "result_state"))
 
             if life_cycle in {"TERMINATED", "SKIPPED", "INTERNAL_ERROR"}:
                 if result_state != "SUCCESS":
-                    message = state.get("state_message") or result_state or life_cycle
+                    message = read_field(state, "state_message") or result_state or life_cycle
                     output_message = get_databricks_run_output_message(output_run_id)
                     raise RuntimeError(f"Databricks job failed: {message}\n{output_message}")
                 break
@@ -412,9 +345,9 @@ def call_databricks_job_rag(payload: dict[str, Any], access: dict[str, Any]) -> 
                 raise TimeoutError(f"Databricks job timed out after {max_wait}s")
             time.sleep(3)
 
-        output = databricks_api_request(f"/api/2.1/jobs/runs/get-output?run_id={output_run_id}")
-        notebook_output = output.get("notebook_output") or {}
-        raw_result = notebook_output.get("result") or ""
+        output = workspace_client.jobs.get_run_output(run_id=output_run_id)
+        notebook_output = read_field(output, "notebook_output", {}) or {}
+        raw_result = read_field(notebook_output, "result") or ""
         parsed = parse_notebook_result(raw_result)
     except Exception as exc:
         return {
@@ -422,7 +355,7 @@ def call_databricks_job_rag(payload: dict[str, Any], access: dict[str, Any]) -> 
             "guard_status": "ERROR",
             "answer_guard_status": "ERROR",
             "blocked": True,
-            "answer": f"Databricks job connection failed: {exc}",
+            "answer": f"Databricks job connection failed: {normalize_databricks_error(exc)}",
             "sources": {"tables": [], "documents": []},
             "checks": {
                 "rbac_enabled": payload.get("rbac_enabled", True),
@@ -462,7 +395,7 @@ def build_mock_answer(payload: dict[str, Any], access: dict[str, Any], mode: str
             "pre_check": "ERROR",
             "post_check": "ERROR",
         },
-        "answer": "RAG backend is not configured. Set DATABRICKS_JOB_ID or RAG_API_URL before running the UI.",
+        "answer": "RAG backend is not configured. Set DATABRICKS_SQL_WAREHOUSE_ID (or DATABRICKS_WAREHOUSE_ID) or RAG_API_URL before running the UI.",
         "sources": {"tables": [], "documents": []},
     }
 
@@ -494,6 +427,7 @@ def extract_sql_log(result: dict[str, Any], payload: dict[str, Any], access: dic
         "status": result.get("guard_status") or raw.get("status") or "UNKNOWN",
         "sql": log.get("sql") or log.get("generated_sql") or raw.get("sql") or "",
         "blocked": bool(result.get("blocked", False)),
+        "chat_source": result.get("mode") or payload.get("mode") or "-",
         "department": payload.get("department_name") or access["department"],
         "clearance": payload.get("security_clearance") or access["default_clearance"],
     }
@@ -506,14 +440,14 @@ def remember_live_result(result: dict[str, Any], payload: dict[str, Any], access
     del RECENT_SQL_LOGS[100:]
 
 
-def build_ui_response(
-    result: dict[str, Any],
-    payload: dict[str, Any],
-    access: dict[str, Any],
-    mode: str,
-    *,
-    backend: str = "in_process_rag",
-) -> dict:
+def answer_payload(payload: dict[str, Any], mode: str) -> dict:
+    access = ROLE_ACCESS.get(payload["role_id"], ROLE_ACCESS["GENERAL_EMPLOYEE"])
+    result = call_external_rag(payload, access) or call_direct_rag(payload, access) or build_mock_answer(payload, access, mode)
+    backend = "mock"
+    if os.getenv("RAG_API_URL", "").strip():
+        backend = "external_rag"
+    elif direct_backend_configured():
+        backend = "direct_databricks"
     response = {
         **result,
         "endpoint": payload.get("endpoint", "/api/answer"),
@@ -531,10 +465,6 @@ def build_ui_response(
         },
         "backend": backend,
     }
-    return response
-
-
-def log_ui_response(response: dict[str, Any], mode: str, backend: str) -> None:
     sources = response.get("sources") or {}
     raw = response.get("raw") if isinstance(response.get("raw"), dict) else {}
     raw_table_access = raw.get("table_access") if isinstance(raw.get("table_access"), list) else []
@@ -556,14 +486,6 @@ def log_ui_response(response: dict[str, Any], mode: str, backend: str) -> None:
             default=str,
         ),
     )
-
-
-def answer_payload(payload: dict[str, Any], mode: str) -> dict:
-    access = ROLE_ACCESS.get(payload["role_id"], ROLE_ACCESS["GENERAL_EMPLOYEE"])
-    backend = "in_process_rag"
-    result = call_in_process_rag(payload, access)
-    response = build_ui_response(result, payload, access, mode, backend=backend)
-    log_ui_response(response, mode, backend)
     remember_live_result(response, payload, access)
     return response
 
@@ -574,126 +496,47 @@ def payload_to_dict(payload: BaseModel) -> dict[str, Any]:
     return payload.dict()
 
 
-def sse_event(event: str, payload: dict[str, Any]) -> str:
-    return (
-        f"event: {event}\n"
-        f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
-    )
-
-
-def native_stream_response(payload: RagChatRequest) -> StreamingResponse:
-    async def event_generator():
-        queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-
-        def emit(event: str, event_payload: dict[str, Any]) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, (event, event_payload))
-
-        def run_chat() -> dict[str, Any]:
-            return get_rag_service().chat(
-                question=payload.question,
-                role_id=payload.role_id,
-                mode=payload.mode,
-                rbac_enabled=payload.rbac_enabled,
-                post_check=payload.post_check,
-                top_k=payload.top_k,
-                event_callback=emit,
-            )
-
-        task = asyncio.create_task(asyncio.to_thread(run_chat))
-        try:
-            while not task.done() or not queue.empty():
-                try:
-                    event, event_payload = await asyncio.wait_for(queue.get(), timeout=0.1)
-                    yield sse_event(event, event_payload)
-                except asyncio.TimeoutError:
-                    continue
-            result = await task
-            yield sse_event("final", result)
-        except ValueError as exc:
-            yield sse_event("error", {"status": 400, "detail": safe_error(exc)})
-        except Exception as exc:
-            yield sse_event("error", {"status": 502, "detail": safe_error(exc)})
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
-
-def ui_stream_response(payload: dict[str, Any], mode: str) -> StreamingResponse:
-    async def event_generator():
-        access = ROLE_ACCESS.get(payload["role_id"], ROLE_ACCESS["GENERAL_EMPLOYEE"])
-        queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
-        loop = asyncio.get_running_loop()
-
-        def emit(event: str, event_payload: dict[str, Any]) -> None:
-            loop.call_soon_threadsafe(queue.put_nowait, (event, event_payload))
-
-        def run_chat() -> dict[str, Any]:
-            raw = execute_rag_chat(payload, event_callback=emit)
-            result = format_rag_api_result(raw, payload, access)
-            return build_ui_response(result, payload, access, mode)
-
-        task = asyncio.create_task(asyncio.to_thread(run_chat))
-        try:
-            while not task.done() or not queue.empty():
-                try:
-                    event, event_payload = await asyncio.wait_for(queue.get(), timeout=0.1)
-                    yield sse_event(event, event_payload)
-                except asyncio.TimeoutError:
-                    continue
-            response = await task
-            log_ui_response(response, mode, "in_process_rag")
-            remember_live_result(response, payload, access)
-            yield sse_event("final", response)
-        except ValueError as exc:
-            yield sse_event("error", {"status": 400, "detail": safe_error(exc)})
-        except Exception as exc:
-            yield sse_event("error", {"status": 502, "detail": safe_error(exc)})
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
-
 @app.get("/")
 def public_ui():
-    return FileResponse(TEMPLATES_DIR / "public.html")
+    return FileResponse("app/templates/public.html")
 
 
 @app.get("/admin-login")
 def admin_login_ui():
-    return FileResponse(TEMPLATES_DIR / "login.html")
+    return FileResponse("app/templates/login.html")
 
 
 @app.get("/admin")
 @app.get("/ui")
 def admin_ui():
-    return FileResponse(TEMPLATES_DIR / "admin.html")
+    return FileResponse("app/templates/admin.html")
 
 
 @app.get("/health")
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "databricks_configured": databricks_configured()}
+    return {"status": "ok"}
 
 
 @app.get("/api/backend/status")
 def backend_status():
+    backend = "mock"
+    if os.getenv("RAG_API_URL", "").strip():
+        backend = "external_rag"
+    elif direct_backend_configured():
+        backend = "direct_databricks"
     return {
-        "backend": "in_process_rag",
-        "rag_api_url_configured": False,
-        "databricks_job_configured": False,
-        "databricks_host_configured": bool(
-            os.getenv("DATABRICKS_HOST", "").strip() or os.getenv("DATABRICKS_SERVER_HOSTNAME", "").strip()
-        ),
-        "databricks_sql_configured": databricks_configured(),
+        "backend": backend,
+        "rag_api_url_configured": bool(os.getenv("RAG_API_URL", "").strip()),
+        "databricks_direct_configured": direct_backend_configured(),
+        "databricks_sql_warehouse_id_configured": bool(os.getenv("DATABRICKS_SQL_WAREHOUSE_ID", "").strip() or os.getenv("DATABRICKS_WAREHOUSE_ID", "").strip()),
+        "databricks_host_configured": bool(os.getenv("DATABRICKS_HOST", "").strip()),
     }
 
 
 @app.post("/api/admin/login")
 def admin_login(payload: LoginRequest):
-    expected_user = os.getenv("ADMIN_USERNAME", "admin")
-    expected_pass = os.getenv("ADMIN_PASSWORD", "")
-    if not expected_pass:
-        return {"ok": False, "redirect": "/admin", "message": "Admin password is not configured."}
-    ok = payload.username == expected_user and payload.password == expected_pass
+    ok = payload.username == "admin" and payload.password == "admin"
     return {"ok": ok, "redirect": "/admin", "message": "Login success" if ok else "Invalid username or password"}
 
 
@@ -702,41 +545,9 @@ def chat(payload: ChatRequest):
     return answer_payload(payload_to_dict(payload), "user")
 
 
-@app.post("/api/chat/stream")
-async def chat_stream_ui(payload: ChatRequest) -> StreamingResponse:
-    return ui_stream_response(payload_to_dict(payload), "user")
-
-
 @app.post("/api/admin/simulate")
 def simulate(payload: SimulateRequest):
     return answer_payload(payload_to_dict(payload), "admin_simulation")
-
-
-@app.post("/api/admin/simulate/stream")
-async def simulate_stream(payload: SimulateRequest) -> StreamingResponse:
-    return ui_stream_response(payload_to_dict(payload), "admin_simulation")
-
-
-@app.post("/v1/chat")
-def rag_chat(payload: RagChatRequest) -> dict[str, object]:
-    try:
-        return get_rag_service().chat(
-            question=payload.question,
-            role_id=payload.role_id,
-            mode=payload.mode,
-            rbac_enabled=payload.rbac_enabled,
-            post_check=payload.post_check,
-            top_k=payload.top_k,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=safe_error(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=safe_error(exc)) from exc
-
-
-@app.post("/v1/chat/stream")
-async def rag_chat_stream(payload: RagChatRequest) -> StreamingResponse:
-    return native_stream_response(payload)
 
 
 @app.get("/api/admin/dashboard/llm")
@@ -871,6 +682,7 @@ def sql_logs(
     role: str = "",
     status: str = "",
     table: str = "",
+    source: str = "",
     date_from: str = "",
     date_to: str = "",
 ):
@@ -895,6 +707,8 @@ def sql_logs(
             continue
         if table and table.lower() not in str(log.get("table_name", "")).lower():
             continue
+        if source and str(log.get("chat_source", "")).lower() != source.lower():
+            continue
 
         filtered.append(log)
 
@@ -915,6 +729,7 @@ def sql_logs(
             "role": role,
             "status": status,
             "table": table,
+            "source": source,
             "date_from": date_from,
             "date_to": date_to,
         },

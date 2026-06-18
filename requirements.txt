@@ -1,7 +1,6 @@
 fastapi
-uvicorn[standard]
-python-dotenv
-pydantic
+uvicorn
 databricks-sdk
 databricks-sql-connector
-pandas
+pydantic
+python-dotenv

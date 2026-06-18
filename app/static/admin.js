@@ -11,6 +11,7 @@ let sqlLogs = [];
 let sqlLogPage = 1;
 let sqlLogTotalPages = 1;
 let roles = [];
+let adminProgressTimer = null;
 
 document.querySelectorAll(".side-nav button").forEach((button) => {
   button.addEventListener("click", () => showView(button.dataset.target, button));
@@ -124,6 +125,40 @@ function setAdminGuardStatus(status) {
   guardCard.classList.toggle("running", ["RUNNING", "PENDING", "WAITING"].includes(normalized));
 }
 
+function setAdminProgress(message) {
+  const target = document.getElementById("adminProgress");
+  if (target) {
+    target.textContent = message;
+  }
+}
+
+function startAdminProgress() {
+  stopAdminProgress();
+  const steps = [
+    {status: "RUNNING", message: "Databricks Job 실행 요청을 전송 중입니다."},
+    {status: "RUNNING", message: "Role과 pre-check 조건을 확인 중입니다."},
+    {status: "RUNNING", message: "SQL 검색과 Vector/RAG 근거를 조회 중입니다."},
+    {status: "RUNNING", message: "LLM 답변을 생성 중입니다."},
+    {status: "RUNNING", message: "post-check와 조회 출처를 정리 중입니다."}
+  ];
+  let index = 0;
+  const renderStep = () => {
+    const step = steps[Math.min(index, steps.length - 1)];
+    setAdminGuardStatus(step.status);
+    setAdminProgress(step.message);
+    index += 1;
+  };
+  renderStep();
+  adminProgressTimer = window.setInterval(renderStep, 4500);
+}
+
+function stopAdminProgress() {
+  if (adminProgressTimer) {
+    window.clearInterval(adminProgressTimer);
+    adminProgressTimer = null;
+  }
+}
+
 async function simulate() {
   const queryInput = document.getElementById("query");
   const payload = {
@@ -132,7 +167,7 @@ async function simulate() {
     security_clearance: document.getElementById("clearance").value,
     query: queryInput.value.trim(),
     rbac_enabled: document.getElementById("simRbacEnabled").checked,
-    pre_check_enabled: document.getElementById("simPreCheckEnabled").checked,
+    pre_check_enabled: document.getElementById("simRbacEnabled").checked,
     post_check_enabled: document.getElementById("simPostCheckEnabled").checked
   };
 
@@ -142,13 +177,32 @@ async function simulate() {
   queryInput.value = "";
 
   const resultTarget = document.getElementById("result");
-  setAdminGuardStatus("RUNNING");
+  startAdminProgress();
   updateCheckStatus("sim", {
     rbac_enabled: payload.rbac_enabled,
     pre_check: payload.pre_check_enabled ? "RUNNING" : "SKIPPED",
     post_check: payload.post_check_enabled ? "WAITING" : "SKIPPED"
   });
-  resultTarget.innerHTML = '<article class="result-card answer"><h3>Running</h3><p>요청을 처리하는 중입니다.</p></article>';
+  resultTarget.innerHTML = `
+    <article class="result-card question">
+      <h3>질문</h3>
+      <p>${escapeHtml(payload.query)}</p>
+    </article>
+    <article class="result-card answer">
+      <div class="message-meta">
+        <span>Admin Chat</span>
+        <strong class="status-pill running">RUNNING</strong>
+      </div>
+      <h3>처리 중</h3>
+      <div class="progress-steps">
+        <span>요청 전송</span>
+        <span>SQL 검색중</span>
+        <span>답변 생성중</span>
+        <span>결과 정리중</span>
+      </div>
+      <p>Databricks Job 응답을 기다리는 중입니다.</p>
+    </article>
+  `;
 
   try {
     const response = await fetch("/api/admin/simulate", {
@@ -156,23 +210,28 @@ async function simulate() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(payload)
     });
-    const finalData = await parseJsonResponse(response);
+
+    const data = await parseJsonResponse(response);
     if (!response.ok) {
-      throw new Error(finalData.detail || finalData.message || `HTTP ${response.status}`);
+      throw new Error(data.detail || data.message || `HTTP ${response.status}`);
     }
 
-    rememberAdminResponse(finalData, "admin-chat-success");
-    setAdminGuardStatus(finalData.guard_status || "UNKNOWN");
-    updateCheckStatus("sim", finalData.checks || {});
-    renderResult(finalData);
+    rememberAdminResponse(data, "admin-chat-success");
+    stopAdminProgress();
+    setAdminGuardStatus(data.guard_status || "UNKNOWN");
+    setAdminProgress(data.blocked ? "권한 또는 guard 조건으로 답변이 차단되었습니다." : "답변이 완료되었습니다.");
+    updateCheckStatus("sim", data.checks || {});
+    renderResult(data);
     renderAdminSources();
   } catch (error) {
+    stopAdminProgress();
     const data = {
       request_id: "REQ-UI-ERROR",
       guard_status: "ERROR",
       answer_guard_status: "ERROR",
       blocked: true,
       answer: `요청 처리 중 오류가 발생했습니다: ${error.message}`,
+      query: payload.query,
       role_id: payload.role_id,
       department_name: payload.department_name,
       security_clearance: payload.security_clearance,
@@ -185,79 +244,11 @@ async function simulate() {
     };
     rememberAdminResponse(data, "admin-chat-error");
     setAdminGuardStatus("ERROR");
+    setAdminProgress("오류가 발생했습니다. Databricks Apps 로그 또는 Job 실행 로그를 확인해 주세요.");
     updateCheckStatus("sim", data.checks);
     renderResult(data);
     renderAdminSources();
   }
-}
-
-function updateAdminStreamProgress(eventName, eventPayload, payload) {
-  if (eventName === "final") {
-    return;
-  }
-
-  const status = getAdminStreamStatus(eventName, eventPayload);
-  setAdminGuardStatus(status);
-  updateCheckStatus("sim", getStreamingChecks(eventName, eventPayload, payload));
-
-  document.getElementById("result").innerHTML = `
-    <article class="result-card answer">
-      <h3>Running</h3>
-      <p>${escapeHtml(describeAdminStreamEvent(eventName, eventPayload))}</p>
-    </article>
-  `;
-}
-
-function getAdminStreamStatus(eventName, eventPayload) {
-  const payloadStatus = String(eventPayload?.status || "").toUpperCase();
-  if (["BLOCKED", "DENIED", "ERROR"].includes(payloadStatus)) {
-    return payloadStatus;
-  }
-  if (eventName === "error") {
-    return "ERROR";
-  }
-  return "RUNNING";
-}
-
-function getStreamingChecks(eventName, eventPayload, payload) {
-  const checks = {
-    rbac_enabled: payload.rbac_enabled,
-    pre_check: payload.pre_check_enabled ? "RUNNING" : "SKIPPED",
-    post_check: payload.post_check_enabled ? "WAITING" : "SKIPPED"
-  };
-
-  if (["sql_generation", "sql_validation", "sql_execution", "post_check", "summarization", "audit"].includes(eventName)) {
-    checks.pre_check = payload.pre_check_enabled ? "PASS" : "SKIPPED";
-  }
-  if (eventName === "post_check") {
-    checks.post_check = eventPayload?.status || "RUNNING";
-  }
-  if (["summarization", "audit"].includes(eventName)) {
-    checks.post_check = payload.post_check_enabled ? "PASS" : "SKIPPED";
-  }
-  if (eventName === "error") {
-    checks.pre_check = "ERROR";
-    checks.post_check = "ERROR";
-  }
-
-  return checks;
-}
-
-function describeAdminStreamEvent(eventName, eventPayload) {
-  const labels = {
-    accepted: "요청을 접수했습니다.",
-    intent: `질문 유형을 확인했습니다: ${eventPayload?.mode || "AUTO"}`,
-    rbac: "역할 권한을 확인하고 있습니다.",
-    retrieval: "관련 데이터 컨텍스트를 검색하고 있습니다.",
-    sql_generation: "조회 SQL을 생성하고 있습니다.",
-    sql_validation: "생성 SQL을 검증하고 있습니다.",
-    sql_execution: "Databricks에서 SQL을 실행하고 있습니다.",
-    post_check: "응답 전 권한 검사를 수행하고 있습니다.",
-    summarization: "조회 결과를 답변으로 정리하고 있습니다.",
-    audit: "감사 로그를 기록하고 있습니다.",
-    error: eventPayload?.detail || "스트리밍 처리 중 오류가 발생했습니다."
-  };
-  return labels[eventName] || "요청을 처리하고 있습니다.";
 }
 
 function rememberAdminResponse(data, context) {
@@ -310,7 +301,15 @@ function renderResult(data) {
   const blockBadge = renderAccessBadge(data);
 
   document.getElementById("result").innerHTML = `
+    <article class="result-card question">
+      <h3>질문</h3>
+      <p>${escapeHtml(data.query || data.raw?.question || "")}</p>
+    </article>
     <article class="result-card answer">
+      <div class="message-meta">
+        <span>Admin Chat</span>
+        <strong class="status-pill ${getStatusPillClass(data.guard_status)}">${escapeHtml(data.guard_status || "UNKNOWN")}</strong>
+      </div>
       <h3>답변</h3>
       <div class="answer-body">${renderAnswer(data.answer || "")}</div>
     </article>
@@ -331,8 +330,7 @@ function renderResult(data) {
     </article>
     <article class="result-card answer">
       <h3>Pre / Post check</h3>
-      <p>RBAC: ${data.checks?.rbac_enabled ? "ON" : "OFF"}</p>
-      <p>Pre-check: ${escapeHtml(data.checks?.pre_check || "UNKNOWN")}</p>
+      <p>Pre-check: ${escapeHtml(data.checks?.pre_check || (data.checks?.rbac_enabled ? "ON" : "OFF"))}</p>
       <p>Post-check: ${escapeHtml(data.checks?.post_check || "UNKNOWN")}</p>
     </article>
   `;
@@ -366,8 +364,8 @@ function renderAdminSources() {
     <div>guard_status: ${escapeHtml(lastResponse.guard_status || "UNKNOWN")}</div>
     <div>answer_guard_status: ${escapeHtml(lastResponse.answer_guard_status || "N/A")}</div>
     <div>blocked: ${lastResponse.blocked ? "true" : "false"}</div>
-    <div>rbac_enabled: ${lastResponse.checks?.rbac_enabled ? "true" : "false"}</div>
-    <div>pre_check: ${escapeHtml(lastResponse.checks?.pre_check || "UNKNOWN")}</div>
+    <div>pre_check_enabled: ${lastResponse.checks?.rbac_enabled ? "true" : "false"}</div>
+    <div>pre_check_result: ${escapeHtml(lastResponse.checks?.pre_check || "UNKNOWN")}</div>
     <div>post_check: ${escapeHtml(lastResponse.checks?.post_check || "UNKNOWN")}</div>
     <div>table_source_count: ${escapeHtml(String(tables.length))}</div>
     <div>document_source_count: ${escapeHtml(String(documents.length))}</div>
@@ -453,8 +451,8 @@ function updateCheckStatus(scope, checks) {
     return;
   }
 
-  document.getElementById("simRbacStatus").textContent = checks.rbac_enabled ? "ON" : "OFF";
-  document.getElementById("simPreStatus").textContent = checks.pre_check || "READY";
+  const preCheck = checks.pre_check || (checks.rbac_enabled ? "ON" : "OFF");
+  document.getElementById("simPreStatus").textContent = preCheck;
   document.getElementById("simPostStatus").textContent = checks.post_check || "READY";
 }
 
@@ -544,6 +542,7 @@ async function loadSqlLogs(page = 1) {
   const dateTo = document.getElementById("sqlDateTo").value;
   const role = document.getElementById("sqlRoleFilter").value;
   const status = document.getElementById("sqlStatusFilter").value;
+  const source = document.getElementById("sqlSourceFilter").value;
   const table = document.getElementById("sqlTableFilter").value.trim();
 
   if (dateFrom) {
@@ -559,6 +558,9 @@ async function loadSqlLogs(page = 1) {
   }
   if (status) {
     params.set("status", status);
+  }
+  if (source) {
+    params.set("source", source);
   }
   if (table) {
     params.set("table", table);
@@ -634,30 +636,30 @@ function getStatusBadgeClass(status) {
   return "green";
 }
 
+function getStatusPillClass(status) {
+  const normalized = String(status || "").toUpperCase();
+  if (["BLOCKED", "DENIED"].includes(normalized)) {
+    return "blocked";
+  }
+  if (["ERROR", "FAILED", "FAILURE"].includes(normalized)) {
+    return "error";
+  }
+  if (["RUNNING", "PENDING", "WAITING"].includes(normalized)) {
+    return "running";
+  }
+  return "success";
+}
+
 function formatKoreanTime(value) {
   if (!value) {
     return "-";
   }
 
   const raw = String(value).trim();
-  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
-  const hasTimezone = /([zZ]|[+-]\d{2}:?\d{2})$/.test(normalized);
-  const date = new Date(hasTimezone ? normalized : `${normalized}Z`);
-
-  if (Number.isNaN(date.getTime())) {
-    return raw;
-  }
-
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  }).format(date);
+  return raw
+    .replace("T", " ")
+    .replace(/\.\d+/, "")
+    .replace(/\s*([zZ]|[+-]\d{2}:?\d{2})$/, "");
 }
 
 function renderMetrics(targetId, data) {
@@ -761,8 +763,14 @@ function renderMarkdownTable(tableLines) {
     return "";
   }
 
-  const headers = rows[0];
-  const bodyRows = rows.slice(1);
+  const columnCount = Math.max(...rows.map((row) => row.length));
+  const headers = normalizeTableRow(rows[0], columnCount).map((cell, index) => {
+    if (cell) {
+      return cell;
+    }
+    return `항목 ${index + 1}`;
+  });
+  const bodyRows = rows.slice(1).map((row) => normalizeTableRow(row, columnCount));
   return `
     <div class="answer-table-wrap">
       <table class="answer-table">
@@ -773,6 +781,14 @@ function renderMarkdownTable(tableLines) {
       </table>
     </div>
   `;
+}
+
+function normalizeTableRow(row, columnCount) {
+  const normalized = [...row];
+  while (normalized.length < columnCount) {
+    normalized.push("");
+  }
+  return normalized.slice(0, columnCount);
 }
 
 function formatInline(value) {
@@ -792,3 +808,71 @@ function escapeHtml(value) {
 
 loadRoles();
 syncProfile();
+
+function renderSqlLogPagination(total) {
+  const pagination = document.querySelector(".log-pagination");
+  if (!pagination) {
+    return;
+  }
+
+  if (sqlLogTotalPages <= 1) {
+    pagination.style.display = "none";
+    return;
+  }
+
+  pagination.style.display = "flex";
+  document.getElementById("sqlLogPageInfo").textContent = `Page ${sqlLogPage} / ${sqlLogTotalPages} · ${total} logs`;
+  document.getElementById("prevSqlLogPage").disabled = sqlLogPage <= 1;
+  document.getElementById("nextSqlLogPage").disabled = sqlLogPage >= sqlLogTotalPages;
+}
+
+function renderSqlLogs() {
+  const target = document.getElementById("sqlLogRows");
+  if (!sqlLogs.length) {
+    target.innerHTML = '<tr><td colspan="7">조건에 맞는 로그가 없습니다.</td></tr>';
+    return;
+  }
+
+  target.innerHTML = sqlLogs.map((log, index) => `
+    <tr data-index="${index}">
+      <td>${escapeHtml(formatKoreanTime(log.query_time))}</td>
+      <td><span class="badge neutral">${escapeHtml(formatChatSource(log.chat_source))}</span></td>
+      <td>${escapeHtml(log.table_name)}</td>
+      <td>${escapeHtml(String(log.row_count))}</td>
+      <td>${escapeHtml(String(log.column_count))}</td>
+      <td>${escapeHtml(log.actor)}</td>
+      <td><span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status)}</span></td>
+    </tr>
+  `).join("");
+
+  document.querySelectorAll("#sqlLogRows tr").forEach((row) => {
+    row.addEventListener("click", () => {
+      renderSqlLogDetail(sqlLogs[Number(row.dataset.index)]);
+    });
+  });
+}
+
+function renderSqlLogDetail(log) {
+  document.getElementById("sqlLogDetail").innerHTML = `
+    <div class="detail-row"><span>Request ID</span><strong>${escapeHtml(log.request_id)}</strong></div>
+    <div class="detail-row"><span>조회 시간</span><strong>${escapeHtml(formatKoreanTime(log.query_time))}</strong></div>
+    <div class="detail-row"><span>채팅 출처</span><strong>${escapeHtml(formatChatSource(log.chat_source))}</strong></div>
+    <div class="detail-row"><span>Table</span><strong>${escapeHtml(log.table_name)}</strong></div>
+    <div class="detail-row"><span>Rows</span><strong>${escapeHtml(String(log.row_count))}</strong></div>
+    <div class="detail-row"><span>Columns</span><strong>${escapeHtml((log.columns || []).join(", "))}</strong></div>
+    <div class="detail-row"><span>Actor</span><strong>${escapeHtml(log.actor)}</strong></div>
+    <div class="detail-row"><span>Status</span><strong>${escapeHtml(log.status)}</strong></div>
+    <div class="detail-row"><span>SQL</span><code>${escapeHtml(log.sql)}</code></div>
+  `;
+}
+
+function formatChatSource(value) {
+  const source = String(value || "").toLowerCase();
+  if (source === "user") {
+    return "일반 Chat";
+  }
+  if (source === "admin_simulation") {
+    return "Admin Chat";
+  }
+  return value || "-";
+}

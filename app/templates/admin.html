@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>COSBELLE RAG Admin Console</title>
-  <link rel="stylesheet" href="/static/admin.css" />
+  <link rel="stylesheet" href="/static/admin.css?v=precheck-scroll-status" />
 </head>
 <body>
   <aside class="sidebar">
@@ -175,6 +175,14 @@
             </select>
           </label>
           <label>
+            채팅 출처
+            <select id="sqlSourceFilter">
+              <option value="">전체 출처</option>
+              <option value="user">일반 Chat</option>
+              <option value="admin_simulation">Admin Chat</option>
+            </select>
+          </label>
+          <label>
             테이블
             <input id="sqlTableFilter" type="search" placeholder="테이블명" />
           </label>
@@ -187,6 +195,7 @@
               <thead>
                 <tr>
                   <th>조회 시간</th>
+                  <th>채팅 출처</th>
                   <th>Table</th>
                   <th>Rows</th>
                   <th>Columns</th>
@@ -195,7 +204,7 @@
                 </tr>
               </thead>
               <tbody id="sqlLogRows">
-                <tr><td colspan="6">아직 로드된 로그가 없습니다.</td></tr>
+                <tr><td colspan="7">아직 로드된 로그가 없습니다.</td></tr>
               </tbody>
             </table>
           </div>
@@ -257,13 +266,9 @@
             <option>RESTRICTED</option>
           </select>
 
-          <div class="toggle-grid">
+          <div class="toggle-grid two">
             <label class="toggle-row">
               <input id="simRbacEnabled" type="checkbox" checked />
-              <span>RBAC ON</span>
-            </label>
-            <label class="toggle-row">
-              <input id="simPreCheckEnabled" type="checkbox" checked />
               <span>Pre-check ON</span>
             </label>
             <label class="toggle-row">
@@ -284,10 +289,10 @@
           <div class="guard-card">
             <span>Guard status</span>
             <strong id="guardStatus">READY</strong>
+            <small id="adminProgress">질문을 실행하면 처리 상태가 표시됩니다.</small>
           </div>
           <div class="check-stack">
-            <div><span>RBAC</span><strong id="simRbacStatus">ON</strong></div>
-            <div><span>Pre-check</span><strong id="simPreStatus">READY</strong></div>
+            <div><span>Pre-check</span><strong id="simPreStatus">ON</strong></div>
             <div><span>Post-check</span><strong id="simPostStatus">READY</strong></div>
           </div>
         </aside>
@@ -299,7 +304,6 @@
     </section>
   </main>
 
-  <script src="/static/stream.js?v=sse-post"></script>
-  <script src="/static/admin.js?v=sse-admin"></script>
+  <script src="/static/admin.js?v=precheck-scroll-status"></script>
 </body>
 </html>
