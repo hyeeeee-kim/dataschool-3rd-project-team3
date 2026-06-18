@@ -6,7 +6,22 @@ command:
   - --port
   - "$DATABRICKS_APP_PORT"
 env:
+  # SQL Warehouse resource binding (resource key in Databricks Apps: sql-warehouse)
   - name: DATABRICKS_SQL_WAREHOUSE_ID
     valueFrom: sql-warehouse
+  # Compatibility alias for templates/libraries that still read DATABRICKS_WAREHOUSE_ID
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+
+  # Model Serving endpoint binding (resource key should exist in Databricks Apps resources)
+  # If your resource key is different, replace serving-endpoint with that key.
+  - name: RAG_LLM_MODEL
+    valueFrom: serving-endpoint
+
+  # App-level RAG defaults
+  - name: RAG_SQL_CATALOG
+    value: "cos_adb"
+  - name: RAG_VS_INDEX_NAME
+    value: "cos_adb.search.metadata_chunks_index"
   - name: DIRECT_SQL_TIMEOUT_SECONDS
     value: "45"
