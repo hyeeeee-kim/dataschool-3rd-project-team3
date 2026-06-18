@@ -103,37 +103,6 @@ def build_check_result(rbac_enabled: bool, pre_check_enabled: bool, post_check_e
     }
 
 
-def role_dashboard_metrics(role_id: str) -> dict:
-    seed = sum(ord(char) for char in role_id)
-    requests = 70 + seed % 180
-    blocked = 2 + seed % 18
-    failed = seed % 7
-    completed = requests - blocked - failed
-    no_evidence = 1 + seed % 9
-    post_blocked = seed % 6
-    return {
-        "requests": requests,
-        "completed": completed,
-        "blocked": blocked,
-        "failed": failed,
-        "pre_check_blocked": blocked - post_blocked if blocked >= post_blocked else blocked,
-        "post_check_blocked": post_blocked,
-        "no_evidence": no_evidence,
-        "guard_pass_rate": f"{round((completed / requests) * 100, 1)}%",
-    }
-
-
-def role_blocked_attempts(role_id: str) -> list[dict]:
-    restricted_candidates = {
-        "MARKETING_STAFF": ["cos_adb.silver.rnd_formula_records", "cos_adb.silver.hr_payroll_summary"],
-        "GENERAL_EMPLOYEE": ["cos_adb.silver.hr_payroll_summary", "cos_adb.silver.rnd_formula_records"],
-        "RND_RESEARCHER": ["cos_adb.silver.finance_budget_plan", "cos_adb.silver.hr_payroll_summary"],
-        "QA_STAFF": ["cos_adb.silver.hr_payroll_summary", "cos_adb.silver.finance_budget_plan"],
-    }
-    tables = restricted_candidates.get(role_id, ["cos_adb.silver.hr_payroll_summary", "cos_adb.silver.rnd_formula_records"])
-    return [{"table": table, "count": index + 1, "reason": "RBAC pre-check blocked"} for index, table in enumerate(tables)]
-
-
 def normalize_sources(raw: dict[str, Any], fallback_tables: list[str], fallback_clearance: str, role_id: str) -> dict:
     raw_sources = raw.get("sources") or raw.get("citations") or {}
     if isinstance(raw_sources, list):
