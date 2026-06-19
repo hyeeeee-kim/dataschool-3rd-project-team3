@@ -525,7 +525,7 @@ textarea {
 
 .overview-intro {
   display: grid;
-  grid-template-columns: 54px minmax(0, 760px);
+  grid-template-columns: 54px minmax(0, 1fr);
   gap: 18px;
   align-items: start;
   padding: 28px 32px 34px;
@@ -577,7 +577,10 @@ textarea {
   margin: 0;
   color: var(--muted);
   line-height: 1.72;
-  max-width: 840px;
+  max-width: none;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  text-wrap: pretty;
 }
 
 .overview-divider {
