@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>COSBELLE RAG Admin Console</title>
-  <link rel="stylesheet" href="/static/admin.css?v=chatbox-scroll-precheck-only" />
+  <link rel="stylesheet" href="/static/admin.css?v=contained-log-conversation" />
 </head>
 <body>
   <aside class="sidebar">
@@ -22,14 +22,16 @@
       <button data-target="sqlLogs">SQL Logs</button>
     </nav>
 
-    <div class="endpoint-tile">
-      <span>Primary endpoint</span>
-      <strong>/api/answer</strong>
-    </div>
+    <div class="sidebar-bottom">
+      <div class="endpoint-tile">
+        <span>Primary endpoint</span>
+        <strong>/api/answer</strong>
+      </div>
 
-    <div class="admin-actions">
-      <a href="/">공통 Chat으로 돌아가기</a>
-      <button id="logoutButton" type="button">Logout</button>
+      <div class="admin-actions">
+        <a href="/">공통 Chat으로 돌아가기</a>
+        <button id="logoutButton" type="button">Logout</button>
+      </div>
     </div>
   </aside>
 
@@ -178,7 +180,7 @@
             채팅 출처
             <select id="sqlSourceFilter">
               <option value="">전체 출처</option>
-              <option value="user">일반 Chat</option>
+              <option value="user">공통 Chat</option>
               <option value="admin_simulation">Admin Chat</option>
             </select>
           </label>
@@ -196,7 +198,7 @@
                 <tr>
                   <th>조회 시간</th>
                   <th>채팅 출처</th>
-                  <th>Table</th>
+                  <th>질문</th>
                   <th>Rows</th>
                   <th>Columns</th>
                   <th>Actor</th>
@@ -304,6 +306,6 @@
     </section>
   </main>
 
-  <script src="/static/admin.js?v=chatbox-scroll-precheck-only"></script>
+  <script src="/static/admin.js?v=log-conversation"></script>
 </body>
 </html>

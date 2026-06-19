@@ -10,6 +10,7 @@ let lastResponse = null;
 let sqlLogs = [];
 let sqlLogPage = 1;
 let sqlLogTotalPages = 1;
+let expandedSqlLogIndex = null;
 let roles = [];
 let adminProgressTimer = null;
 
@@ -57,50 +58,6 @@ function showView(id, button) {
   if (id === "adminDisplay") {
     renderAdminSources();
   }
-  if (id === "sqlLogs") {
-    loadSqlLogs(1);
-  }
-}
-
-async function loadRoles() {
-  if (roles.length) {
-    return roles;
-  }
-
-  const response = await fetch("/api/admin/roles");
-  roles = await response.json();
-
-  const options = roles.map((role) => `
-    <option value="${escapeHtml(role.role_id)}">${escapeHtml(role.role_id)}</option>
-  `).join("");
-  document.getElementById("role").innerHTML = options;
-  document.getElementById("dashboardRole").innerHTML = options;
-  document.getElementById("sqlRoleFilter").innerHTML = `<option value="">전체 역할</option>${options}`;
-
-  if (roles.length) {
-    const adminRoleSelect = document.getElementById("role");
-    adminRoleSelect.value = roles.some((role) => role.role_id === "MARKETING_STAFF")
-      ? "MARKETING_STAFF"
-      : roles[0].role_id;
-    applyRoleDefaults(adminRoleSelect.value);
-  }
-
-  return roles;
-}
-
-function applyRoleDefaults(roleId) {
-  const role = roles.find((item) => item.role_id === roleId);
-  if (role) {
-    setSelectValue("department", role.department);
-    setSelectValue("clearance", role.default_clearance);
-  }
-  syncProfile();
-}
-
-function setSelectValue(selectId, value) {
-  const select = document.getElementById(selectId);
-  const exists = Array.from(select.options).some((option) => option.value === value || option.textContent === value);
-  if (!exists) {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = value;
@@ -571,6 +528,7 @@ async function loadSqlLogs(page = 1) {
   sqlLogs = Array.isArray(payload) ? payload : payload.logs || [];
   sqlLogPage = Array.isArray(payload) ? 1 : payload.page || 1;
   sqlLogTotalPages = Array.isArray(payload) ? 1 : payload.total_pages || 1;
+  expandedSqlLogIndex = null;
 
   renderSqlLogs();
   if (sqlLogs.length) {
@@ -579,50 +537,6 @@ async function loadSqlLogs(page = 1) {
     document.getElementById("sqlLogDetail").textContent = "조건에 맞는 로그가 없습니다.";
   }
   renderSqlLogPagination(Array.isArray(payload) ? sqlLogs.length : payload.total || 0);
-}
-
-function renderSqlLogs() {
-  const target = document.getElementById("sqlLogRows");
-  if (!sqlLogs.length) {
-    target.innerHTML = '<tr><td colspan="6">조건에 맞는 로그가 없습니다.</td></tr>';
-    return;
-  }
-
-  target.innerHTML = sqlLogs.map((log, index) => `
-    <tr data-index="${index}">
-      <td>${escapeHtml(formatKoreanTime(log.query_time))}</td>
-      <td>${escapeHtml(log.table_name)}</td>
-      <td>${escapeHtml(String(log.row_count))}</td>
-      <td>${escapeHtml(String(log.column_count))}</td>
-      <td>${escapeHtml(log.actor)}</td>
-      <td><span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status)}</span></td>
-    </tr>
-  `).join("");
-
-  document.querySelectorAll("#sqlLogRows tr").forEach((row) => {
-    row.addEventListener("click", () => {
-      renderSqlLogDetail(sqlLogs[Number(row.dataset.index)]);
-    });
-  });
-}
-
-function renderSqlLogPagination(total) {
-  document.getElementById("sqlLogPageInfo").textContent = `Page ${sqlLogPage} / ${sqlLogTotalPages} · ${total} logs`;
-  document.getElementById("prevSqlLogPage").disabled = sqlLogPage <= 1;
-  document.getElementById("nextSqlLogPage").disabled = sqlLogPage >= sqlLogTotalPages;
-}
-
-function renderSqlLogDetail(log) {
-  document.getElementById("sqlLogDetail").innerHTML = `
-    <div class="detail-row"><span>Request ID</span><strong>${escapeHtml(log.request_id)}</strong></div>
-    <div class="detail-row"><span>조회 시간</span><strong>${escapeHtml(formatKoreanTime(log.query_time))}</strong></div>
-    <div class="detail-row"><span>Table</span><strong>${escapeHtml(log.table_name)}</strong></div>
-    <div class="detail-row"><span>Rows</span><strong>${escapeHtml(String(log.row_count))}</strong></div>
-    <div class="detail-row"><span>Columns</span><strong>${escapeHtml((log.columns || []).join(", "))}</strong></div>
-    <div class="detail-row"><span>Actor</span><strong>${escapeHtml(log.actor)}</strong></div>
-    <div class="detail-row"><span>Status</span><strong>${escapeHtml(log.status)}</strong></div>
-    <div class="detail-row"><span>SQL</span><code>${escapeHtml(log.sql)}</code></div>
-  `;
 }
 
 function getStatusBadgeClass(status) {
@@ -833,21 +747,28 @@ function renderSqlLogs() {
     return;
   }
 
-  target.innerHTML = sqlLogs.map((log, index) => `
-    <tr data-index="${index}">
-      <td>${escapeHtml(formatKoreanTime(log.query_time))}</td>
-      <td><span class="badge neutral">${escapeHtml(formatChatSource(log.chat_source))}</span></td>
-      <td>${escapeHtml(log.table_name)}</td>
-      <td>${escapeHtml(String(log.row_count))}</td>
-      <td>${escapeHtml(String(log.column_count))}</td>
-      <td>${escapeHtml(log.actor)}</td>
-      <td><span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status)}</span></td>
-    </tr>
-  `).join("");
+  target.innerHTML = sqlLogs.map((log, index) => {
+    const isExpanded = expandedSqlLogIndex === index;
+    return `
+      <tr data-index="${index}" class="${isExpanded ? "log-row-expanded" : ""}">
+        <td>${escapeHtml(formatKoreanTime(log.query_time))}</td>
+        <td><span class="badge neutral">${escapeHtml(formatChatSource(log.chat_source))}</span></td>
+        <td class="log-question-cell" title="${escapeHtml(formatLogQuestion(log))}">${escapeHtml(formatLogQuestionPreview(log))}</td>
+        <td>${escapeHtml(String(log.row_count))}</td>
+        <td>${escapeHtml(String(log.column_count))}</td>
+        <td>${escapeHtml(log.actor)}</td>
+        <td><span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status)}</span></td>
+      </tr>
+      ${isExpanded ? renderSqlLogConversation(log) : ""}
+    `;
+  }).join("");
 
-  document.querySelectorAll("#sqlLogRows tr").forEach((row) => {
+  document.querySelectorAll("#sqlLogRows tr[data-index]").forEach((row) => {
     row.addEventListener("click", () => {
-      renderSqlLogDetail(sqlLogs[Number(row.dataset.index)]);
+      const index = Number(row.dataset.index);
+      expandedSqlLogIndex = expandedSqlLogIndex === index ? null : index;
+      renderSqlLogDetail(sqlLogs[index]);
+      renderSqlLogs();
     });
   });
 }
@@ -857,6 +778,7 @@ function renderSqlLogDetail(log) {
     <div class="detail-row"><span>Request ID</span><strong>${escapeHtml(log.request_id)}</strong></div>
     <div class="detail-row"><span>조회 시간</span><strong>${escapeHtml(formatKoreanTime(log.query_time))}</strong></div>
     <div class="detail-row"><span>채팅 출처</span><strong>${escapeHtml(formatChatSource(log.chat_source))}</strong></div>
+    <div class="detail-row"><span>질문</span><strong>${escapeHtml(formatLogQuestion(log))}</strong></div>
     <div class="detail-row"><span>Table</span><strong>${escapeHtml(log.table_name)}</strong></div>
     <div class="detail-row"><span>Rows</span><strong>${escapeHtml(String(log.row_count))}</strong></div>
     <div class="detail-row"><span>Columns</span><strong>${escapeHtml((log.columns || []).join(", "))}</strong></div>
@@ -866,10 +788,52 @@ function renderSqlLogDetail(log) {
   `;
 }
 
+function renderSqlLogConversation(log) {
+  const answer = formatLogAnswer(log);
+  return `
+    <tr class="log-conversation-row">
+      <td colspan="7">
+        <section class="log-conversation">
+          <div class="log-conversation-header">
+            <strong>대화 기록</strong>
+            <span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status || "UNKNOWN")}</span>
+          </div>
+          <div class="log-conversation-turn user-turn">
+            <span>Question</span>
+            <p>${escapeHtml(formatLogQuestion(log))}</p>
+          </div>
+          <div class="log-conversation-turn assistant-turn">
+            <span>Response</span>
+            ${answer ? `<div class="answer-body">${renderAnswer(answer)}</div>` : "<p>이 로그에는 아직 LLM 답변 기록이 없습니다. 새 노트북으로 실행된 로그부터 표시됩니다.</p>"}
+          </div>
+        </section>
+      </td>
+    </tr>
+  `;
+}
+
+function formatLogQuestion(log) {
+  const question = log?.question || log?.user_question || log?.query || log?.raw_question || "";
+  return String(question || log?.table_name || "-");
+}
+
+function formatLogQuestionPreview(log, maxLength = 42) {
+  const question = formatLogQuestion(log).replace(/\s+/g, " ").trim();
+  if (question.length <= maxLength) {
+    return question;
+  }
+  return `${question.slice(0, maxLength).trimEnd()}...`;
+}
+
+function formatLogAnswer(log) {
+  const answer = log?.llm_answer || log?.answer || log?.response || log?.summary || "";
+  return String(answer || "");
+}
+
 function formatChatSource(value) {
   const source = String(value || "").toLowerCase();
   if (source === "user") {
-    return "일반 Chat";
+    return "공통 Chat";
   }
   if (source === "admin_simulation") {
     return "Admin Chat";

@@ -294,7 +294,7 @@ function appendBlockingMessage(data) {
 function appendErrorMessage(data) {
   const checks = data.checks || {};
   const role = data.effective_identity?.role_id || data.role_id || "현재 사용자";
-  const reason = data.answer || "답변 생성 중 오류가 발생했습니다.";
+  const reason = getPublicSafeErrorMessage();
   const detail = [
     `Role: ${role}`,
     `Pre-check: ${checks.pre_check || "ERROR"}`,
@@ -315,6 +315,10 @@ function appendErrorMessage(data) {
     </div>
   `;
   appendMessageElement(message);
+}
+
+function getPublicSafeErrorMessage() {
+  return '실행 오류로 답변을 가져오지 못했습니다. 상세 원인은 관리자 페이지의 SQL Logs에서 확인해 주세요.';
 }
 
 function appendPublicMessage(type, label, text, meta = null) {

@@ -50,13 +50,17 @@ textarea {
 }
 
 .sidebar {
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   padding: 30px 20px;
   background: var(--sidebar-bg);
   border-right: 1px solid #cfd6e4;
   display: flex;
   flex-direction: column;
   gap: 18px;
+  overflow-y: auto;
+  position: sticky;
+  top: 0;
 }
 
 .chat-sidebar {
@@ -133,11 +137,22 @@ textarea {
 
 .admin-actions {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   background: var(--surface);
   border-radius: 8px;
-  padding: 12px;
+  padding: 9px;
   box-shadow: 0 12px 28px rgba(37, 42, 64, 0.09);
+}
+
+.sidebar-bottom {
+  display: grid;
+  gap: 12px;
+  margin-top: auto;
+  position: sticky;
+  bottom: 0;
+  padding-top: 6px;
+  background: var(--sidebar-bg);
+  z-index: 2;
 }
 
 .admin-actions a,
@@ -147,11 +162,13 @@ textarea {
   background: var(--surface-soft);
   color: var(--muted);
   text-align: left;
-  padding: 11px 12px;
+  padding: 9px 10px;
   cursor: pointer;
   font-weight: 700;
   text-decoration: none;
   font: inherit;
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .admin-actions a:hover,
@@ -236,8 +253,8 @@ textarea {
 }
 
 .endpoint-tile {
-  margin-top: auto;
-  padding: 18px;
+  margin-top: 0;
+  padding: 13px 14px;
   background: linear-gradient(145deg, var(--primary), #3922b9);
   color: white;
 }
@@ -253,7 +270,7 @@ textarea {
 
 .endpoint-tile strong {
   margin-top: 8px;
-  font-size: 19px;
+  font-size: 17px;
 }
 
 .workspace {
@@ -655,6 +672,16 @@ textarea {
   white-space: pre-wrap;
 }
 
+.result-card.question {
+  background: #f8f9fd;
+  box-shadow: none;
+}
+
+.result-card.question p {
+  color: var(--ink);
+  font-weight: 700;
+}
+
 .answer-body {
   color: var(--muted);
   line-height: 1.65;
@@ -996,6 +1023,108 @@ textarea:focus {
 .source-section strong {
   color: var(--text);
   font-size: 13px;
+}
+
+.log-question-cell {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-row-expanded {
+  background: var(--surface-soft);
+}
+
+.log-conversation-row td {
+  padding: 14px 10px 22px;
+  background: var(--surface-soft);
+  max-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.log-conversation {
+  display: grid;
+  gap: 16px;
+  margin: 0 0 6px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 10px 24px rgba(37, 42, 64, 0.05);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  contain: inline-size layout paint;
+}
+
+.log-conversation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.log-conversation-turn {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.log-conversation-turn span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.log-conversation-turn p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.log-conversation .answer-body {
+  display: block;
+  padding: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.log-conversation .answer-table-wrap {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  max-height: min(360px, 46vh);
+  overflow-x: auto;
+  overflow-y: auto;
+  margin: 12px 0 18px;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.log-conversation .answer-table {
+  width: max-content;
+  min-width: 960px;
+  max-width: none;
+}
+
+.log-conversation .answer-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.log-table tbody tr {
+  cursor: pointer;
+}
+
+.log-table tbody tr:hover {
+  background: var(--surface-soft);
 }
 
 .muted-empty {
