@@ -60,6 +60,7 @@
   - Direct RAG 실행 (SQL Warehouse + Vector Search + Serving)
 - 연결 정보가 없을 때는 mock 응답으로 동작 상태를 표시
 
+
 ## 프로젝트 구조
 
 - `app/main.py`: API 엔드포인트, 라우팅, 응답/로그 조합
