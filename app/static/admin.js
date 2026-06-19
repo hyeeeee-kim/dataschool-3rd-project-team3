@@ -10,14 +10,20 @@ let lastResponse = null;
 let sqlLogs = [];
 let sqlLogPage = 1;
 let sqlLogTotalPages = 1;
+let expandedSqlLogIndex = null;
 let roles = [];
-let dashboardRoles = [];
-let currentDashboardData = null;
 let adminProgressTimer = null;
 
-document.querySelectorAll(".side-nav button").forEach((button) => {
-  button.addEventListener("click", () => showView(button.dataset.target, button));
-});
+const sideNav = document.querySelector(".side-nav");
+if (sideNav) {
+  sideNav.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-target]");
+    if (!button || !sideNav.contains(button)) {
+      return;
+    }
+    showView(button.dataset.target, button);
+  });
+}
 
 document.getElementById("simulateForm").addEventListener("submit", (event) => {
   event.preventDefault();
@@ -38,7 +44,7 @@ document.getElementById("applySqlLogFilters").addEventListener("click", () => lo
 document.getElementById("prevSqlLogPage").addEventListener("click", () => loadSqlLogs(Math.max(sqlLogPage - 1, 1)));
 document.getElementById("nextSqlLogPage").addEventListener("click", () => loadSqlLogs(Math.min(sqlLogPage + 1, sqlLogTotalPages)));
 document.getElementById("dashboardRole").addEventListener("change", (event) => {
-  loadDataDashboard(event.target.value);
+  loadRoleAccess(event.target.value);
 });
 document.getElementById("logoutButton").addEventListener("click", () => {
   sessionStorage.removeItem("cosbelle_admin");
@@ -62,41 +68,6 @@ function showView(id, button) {
   if (id === "sqlLogs") {
     loadSqlLogs(1);
   }
-}
-
-async function loadRoles() {
-  if (roles.length) {
-    return roles;
-  }
-
-  const response = await fetch("/api/admin/roles");
-  roles = await response.json();
-
-  const options = roles.map((role) => `
-    <option value="${escapeHtml(role.role_id)}">${escapeHtml(role.role_id)}</option>
-  `).join("");
-  document.getElementById("role").innerHTML = options;
-  document.getElementById("dashboardRole").innerHTML = options;
-  document.getElementById("sqlRoleFilter").innerHTML = `<option value="">전체 역할</option>${options}`;
-
-  if (roles.length) {
-    const adminRoleSelect = document.getElementById("role");
-    adminRoleSelect.value = roles.some((role) => role.role_id === "MARKETING_STAFF")
-      ? "MARKETING_STAFF"
-      : roles[0].role_id;
-    applyRoleDefaults(adminRoleSelect.value);
-  }
-
-  return roles;
-}
-
-function applyRoleDefaults(roleId) {
-  const role = roles.find((item) => item.role_id === roleId);
-  if (role) {
-    setSelectValue("department", role.department);
-    setSelectValue("clearance", role.default_clearance);
-  }
-  syncProfile();
 }
 
 function setSelectValue(selectId, value) {
@@ -137,7 +108,7 @@ function setAdminProgress(message) {
 function startAdminProgress() {
   stopAdminProgress();
   const steps = [
-    {status: "RUNNING", message: "Databricks Job 실행 요청을 전송 중입니다."},
+    {status: "RUNNING", message: "요청을 전송 중입니다."},
     {status: "RUNNING", message: "Role과 pre-check 조건을 확인 중입니다."},
     {status: "RUNNING", message: "SQL 검색과 Vector/RAG 근거를 조회 중입니다."},
     {status: "RUNNING", message: "LLM 답변을 생성 중입니다."},
@@ -196,7 +167,7 @@ async function simulate() {
         <strong class="status-pill running">RUNNING</strong>
       </div>
       <h3>처리 중</h3>
-      <p>진행 상황을 확인하고 있습니다. Databricks Job 응답을 기다리는 중입니다.</p>
+      <p>진행 상황을 확인하고 있습니다. 응답을 기다리는 중입니다.</p>
     </article>
   `;
 
@@ -368,6 +339,53 @@ function renderAdminSources() {
   `;
 }
 
+async function loadRoles() {
+  if (roles.length) {
+    return roles;
+  }
+
+  const response = await fetch("/api/admin/roles");
+  roles = await response.json();
+
+  const options = roles.map((role) => `
+    <option value="${escapeHtml(role.role_id)}">${escapeHtml(role.role_id)}</option>
+  `).join("");
+  document.getElementById("role").innerHTML = options;
+  document.getElementById("dashboardRole").innerHTML = options;
+  document.getElementById("sqlRoleFilter").innerHTML = `<option value="">전체 역할</option>${options}`;
+
+  if (roles.length) {
+    const adminRoleSelect = document.getElementById("role");
+    adminRoleSelect.value = roles.some((role) => role.role_id === "MARKETING_STAFF")
+      ? "MARKETING_STAFF"
+      : roles[0].role_id;
+    applyRoleDefaults(adminRoleSelect.value);
+  }
+
+  return roles;
+}
+
+function applyRoleDefaults(roleId) {
+  const role = roles.find((item) => item.role_id === roleId);
+  if (role) {
+    setSelectValue("department", role.department);
+    setSelectValue("clearance", role.default_clearance);
+  }
+  syncProfile();
+}
+
+function setSelectValue(selectId, value) {
+  const select = document.getElementById(selectId);
+  const exists = Array.from(select.options).some((option) => option.value === value || option.textContent === value);
+  if (!exists) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  }
+  select.value = value;
+}
+
 function getSourceTables(data) {
   const sourceTables = data?.sources?.tables;
   if (Array.isArray(sourceTables) && sourceTables.length) {
@@ -453,645 +471,78 @@ function updateCheckStatus(scope, checks) {
 }
 
 async function loadDashboards() {
-  await loadDashboardRoles();
-  await loadDataDashboard(document.getElementById("dashboardRole").value);
+  const [llmResponse, databaseResponse] = await Promise.all([
+    fetch("/api/admin/dashboard/llm"),
+    fetch("/api/admin/dashboard/database")
+  ]);
+
+  const llmData = await llmResponse.json();
+  const databaseData = await databaseResponse.json();
+
+  renderMetrics("llmMetrics", llmData);
+  renderMetrics("databaseMetrics", databaseData);
+  await loadRoles();
+  await loadRoleAccess(document.getElementById("dashboardRole").value);
 }
 
-async function loadDashboardRoles() {
-  const response = await fetch("/api/admin/data-dashboard/roles");
+async function loadRoleAccess(roleId) {
+  const response = await fetch(`/api/admin/roles/${encodeURIComponent(roleId)}/access`);
   const data = await response.json();
-  dashboardRoles = data.roles || [];
 
-  const target = document.getElementById("dashboardRole");
-  const previousValue = target.value;
-  target.innerHTML = dashboardRoles.map((role) => `
-    <option value="${escapeHtml(role.role_id)}">${escapeHtml(role.label)} · ${escapeHtml(role.role_id)}</option>
-  `).join("");
-
-  if (dashboardRoles.some((role) => role.role_id === previousValue)) {
-    target.value = previousValue;
-  } else if (dashboardRoles.length) {
-    target.value = dashboardRoles[0].role_id;
-  }
-
-}
-
-async function loadDataDashboard(roleId) {
-  const target = document.getElementById("roleAccessSummary");
-  if (!roleId) {
-    target.innerHTML = '<div class="empty-state">선택 가능한 역할이 없습니다.</div>';
-    return;
-  }
-
-  target.innerHTML = '<div class="empty-state">Databricks SQL Warehouse에서 대시보드 데이터를 조회하는 중입니다.</div>';
-
-  const response = await fetch(`/api/admin/data-dashboard/${encodeURIComponent(roleId)}`);
-  const data = await response.json();
-  currentDashboardData = data;
-
-  renderDataDashboard(data);
-}
-
-function renderDataDashboard(data) {
-  const target = document.getElementById("roleAccessSummary");
-  const commonMetrics = addDashboardGroup(data.common_metrics || [], "common");
-  const roleMetrics = addDashboardGroup(data.role_metrics || [], "role");
-  const allMetrics = [...commonMetrics, ...roleMetrics];
-  const successCount = allMetrics.filter((metric) => metric.status === "SUCCESS").length;
-  const failedCount = allMetrics.length - successCount;
-  const tableCount = new Set(allMetrics.map((metric) => metric.table).filter(Boolean)).size;
-
-  target.innerHTML = `
-    <article class="role-access-card dashboard-profile-card">
-      <span class="card-kicker">Role Profile</span>
-      <h3>${escapeHtml(data.label)}</h3>
-      <p><strong>${escapeHtml(data.role_id)}</strong> · ${escapeHtml(data.role_name)}</p>
-      <div class="dashboard-chip-row">
-        <span>${escapeHtml(data.department || "-")}</span>
-        <span>${escapeHtml(data.default_clearance || "-")}</span>
+  document.getElementById("roleAccessSummary").innerHTML = `
+    <article class="role-access-card">
+      <h3>Role Profile</h3>
+      <p><strong>${escapeHtml(data.role_id)}</strong></p>
+      <p>${escapeHtml(data.role_name)}</p>
+      <p>${escapeHtml(data.description || "")}</p>
+      <p>부서: ${escapeHtml(data.department || "-")}</p>
+      <p>기본 등급: ${escapeHtml(data.default_clearance)}</p>
+    </article>
+    <article class="role-access-card">
+      <h3>시스템 / 도메인</h3>
+      <div class="pill-list">
+        ${data.systems.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("")}
+        ${data.domains.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("")}
       </div>
     </article>
-    <article class="role-access-card dashboard-summary-card">
-      <span class="card-kicker">Query Status</span>
-      <h3>조회 상태</h3>
-      <div class="mini-metrics">
-        <div><span>전체 지표</span><strong>${escapeHtml(allMetrics.length)}</strong></div>
-        <div><span>성공</span><strong>${escapeHtml(successCount)}</strong></div>
-        <div><span>실패/미설정</span><strong>${escapeHtml(failedCount)}</strong></div>
-        <div><span>테이블</span><strong>${escapeHtml(tableCount)}</strong></div>
-      </div>
-    </article>
-    <article class="role-access-card dashboard-note-card">
-      <span class="card-kicker">Rules</span>
-      <h3>표시 기준</h3>
+    <article class="role-access-card">
+      <h3>접근 table</h3>
       <div class="source-list">
-        ${(data.notes || []).map((note) => `<div>${escapeHtml(note)}</div>`).join("")}
+        ${data.tables.map((item) => `<div>${escapeHtml(item)}</div>`).join("")}
       </div>
     </article>
-    ${renderDashboardSection("전사 공통", commonMetrics, "전 역할에서 같이 보는 업무 기준 지표입니다.")}
-    ${renderDashboardSection(`${data.label} 전용`, roleMetrics, "선택한 역할의 업무 권한과 가까운 지표입니다.")}
-  `;
-}
-
-function addDashboardGroup(metrics, group) {
-  return metrics.map((metric) => ({...metric, group}));
-}
-
-function renderDashboardSection(title, metrics, description) {
-  return `
-    <div class="dashboard-section-title">
-      <div>
-        <strong>${escapeHtml(title)}</strong>
-        <span>${escapeHtml(description)}</span>
+    <article class="role-access-card">
+      <h3>사용량</h3>
+      <div class="mini-metrics">
+        <div><span>Requests</span><strong>${escapeHtml(data.usage.requests)}</strong></div>
+        <div><span>Completed</span><strong>${escapeHtml(data.usage.completed)}</strong></div>
+        <div><span>Blocked</span><strong>${escapeHtml(data.usage.blocked)}</strong></div>
+        <div><span>Failed</span><strong>${escapeHtml(data.usage.failed)}</strong></div>
       </div>
-    </div>
-    ${metrics.map(renderDashboardMetric).join("") || '<div class="empty-state">조건에 맞는 지표가 없습니다.</div>'}
-  `;
-}
-
-function renderDashboardMetric(metric) {
-  const statusClass = metric.status === "SUCCESS" ? "green" : "red";
-  const rows = metric.rows || [];
-  const visualization = metric.status === "SUCCESS" ? renderDashboardVisualization(metric, rows) : "";
-  return `
-    <article class="role-access-card db-metric-card">
-      <div class="db-metric-heading">
-        <div>
-          <h3>${escapeHtml(metric.title)}</h3>
-          <p>${escapeHtml(metric.table)} · ${escapeHtml(metric.visualization)}</p>
-        </div>
-        <span class="badge ${statusClass}">${escapeHtml(metric.status)}</span>
+    </article>
+    <article class="role-access-card">
+      <h3>Guard / 차단</h3>
+      <div class="mini-metrics">
+        <div><span>Pre blocked</span><strong>${escapeHtml(data.usage.pre_check_blocked)}</strong></div>
+        <div><span>Post blocked</span><strong>${escapeHtml(data.usage.post_check_blocked)}</strong></div>
+        <div><span>No evidence</span><strong>${escapeHtml(data.usage.no_evidence)}</strong></div>
+        <div><span>PASS rate</span><strong>${escapeHtml(data.usage.guard_pass_rate)}</strong></div>
       </div>
-      ${metric.status === "SUCCESS"
-        ? `${visualization}${renderDashboardRows(metric.columns || [], rows)}`
-        : `<div class="empty-state">${escapeHtml(metric.error || "조회 결과가 없습니다.")}</div>`}
+    </article>
+    <article class="role-access-card">
+      <h3>많이 조회된 출처</h3>
+      <div class="source-list">
+        ${data.top_tables.map((item) => `<div>${escapeHtml(item.table)} <strong>${escapeHtml(item.count)}</strong></div>`).join("")}
+        ${data.top_documents.map((item) => `<div>${escapeHtml(item.document_id)} <strong>${escapeHtml(item.count)}</strong></div>`).join("")}
+      </div>
+    </article>
+    <article class="role-access-card">
+      <h3>차단된 접근</h3>
+      <div class="source-list">
+        ${data.blocked_attempts.map((item) => `<div>${escapeHtml(item.table)} <strong>${escapeHtml(item.count)}</strong></div>`).join("")}
+      </div>
     </article>
   `;
-}
-
-function renderDashboardVisualization(metric, rows) {
-  if (!rows.length) {
-    return "";
-  }
-
-  const columns = metric.columns || Object.keys(rows[0] || {});
-  const numericColumns = columns.filter((column) => rows.some((row) => toNumber(row[column]) !== null));
-  if (!numericColumns.length) {
-    return renderTimelinePreview(metric, rows, columns);
-  }
-
-  const visual = String(metric.visualization || "").toLowerCase();
-  if (visual.includes("목록")) {
-    return renderListPreview(metric, rows, columns);
-  }
-  if (visual.includes("히트맵")) {
-    return renderHeatmapPreview(rows, columns, numericColumns);
-  }
-  if (visual.includes("트리맵")) {
-    return renderTreemapPreview(rows, columns, numericColumns);
-  }
-  if (visual.includes("퍼널")) {
-    return renderFunnelPreview(rows, columns, numericColumns);
-  }
-  if (visual.includes("산점도")) {
-    if (numericColumns.length < 2) {
-      return renderHeatmapPreview(rows, columns, numericColumns);
-    }
-    return renderScatterPreview(rows, columns, numericColumns);
-  }
-  if (visual.includes("간트")) {
-    return renderGanttPreview(metric, rows, columns);
-  }
-  if (visual.includes("스택")) {
-    return renderStackedBarPreview(rows, columns, numericColumns);
-  }
-  if (visual.includes("상태 바")) {
-    return renderStatusBarPreview(rows, columns, numericColumns);
-  }
-  if (visual.includes("게이지") || visual.includes("kpi") || visual.includes("스코어")) {
-    return renderGaugePreview(rows, columns, numericColumns);
-  }
-  if (visual.includes("도넛")) {
-    return renderDonutPreview(rows, columns, numericColumns);
-  }
-  if (visual.includes("라인")) {
-    return renderLinePreview(rows, columns, numericColumns);
-  }
-  if (visual.includes("캘린더")) {
-    return renderCalendarPreview(metric, rows, columns);
-  }
-  if (visual.includes("타임라인")) {
-    return renderTimelinePreview(metric, rows, columns);
-  }
-  if (visual.includes("테이블")) {
-    return renderTablePreview(rows, columns);
-  }
-  return renderBarPreview(rows, columns, numericColumns);
-}
-
-function renderListPreview(metric, rows, columns) {
-  const titleColumn = columns.find((column) => /name|title|type|event/i.test(column)) || columns[0];
-  const statusColumn = columns.find((column) => /status|approval|state/i.test(column));
-  const countColumn = columns.find((column) => /count|total|qty|quantity/i.test(column));
-
-  return `
-    <div class="mini-chart event-list-chart">
-      ${rows.slice(0, 8).map((row) => `
-        <div class="event-list-row">
-          <div>
-            <strong>${escapeHtml(row[titleColumn] ?? metric.title)}</strong>
-            ${statusColumn ? `<span>${escapeHtml(row[statusColumn] ?? "-")}</span>` : ""}
-          </div>
-          ${countColumn ? `<em>${escapeHtml(formatNumber(row[countColumn]))}</em>` : ""}
-        </div>
-      `).join("")}
-    </div>
-  `;
-}
-
-function renderTablePreview(rows, columns) {
-  const previewColumns = columns.slice(0, 4);
-  return `
-    <div class="mini-chart table-preview-chart">
-      ${rows.slice(0, 5).map((row) => `
-        <div class="table-preview-row">
-          ${previewColumns.map((column) => `
-            <div>
-              <span>${escapeHtml(column)}</span>
-              <strong>${escapeHtml(row[column] ?? "-")}</strong>
-            </div>
-          `).join("")}
-        </div>
-      `).join("")}
-    </div>
-  `;
-}
-
-function renderHeatmapPreview(rows, columns, numericColumns) {
-  const valueColumn = chooseValueColumn(numericColumns);
-  const rowColumn = columns.find((column) => column !== valueColumn) || columns[0];
-  const columnColumn = columns.find((column) => column !== valueColumn && column !== rowColumn) || rowColumn;
-  const rowLabels = [...new Set(rows.map((row) => row[rowColumn] ?? "-"))].slice(0, 6);
-  const columnLabels = [...new Set(rows.map((row) => row[columnColumn] ?? "-"))].slice(0, 6);
-  const maxValue = Math.max(...rows.map((row) => Math.abs(toNumber(row[valueColumn]) || 0)), 1);
-
-  return `
-    <div class="mini-chart heatmap-chart">
-      <div class="heatmap-grid" style="--heatmap-cols:${columnLabels.length}">
-        <span class="heatmap-axis"></span>
-        ${columnLabels.map((label) => `<span class="heatmap-axis">${escapeHtml(label)}</span>`).join("")}
-        ${rowLabels.map((rowLabel) => `
-          <span class="heatmap-axis heatmap-row-label">${escapeHtml(rowLabel)}</span>
-          ${columnLabels.map((columnLabel) => {
-            const match = rows.find((row) => String(row[rowColumn] ?? "-") === String(rowLabel) && String(row[columnColumn] ?? "-") === String(columnLabel));
-            const value = toNumber(match?.[valueColumn]) || 0;
-            const intensity = Math.max(value / maxValue, 0.12);
-            return `<span class="heatmap-cell" style="--intensity:${intensity}"><strong>${escapeHtml(formatNumber(value))}</strong></span>`;
-          }).join("")}
-        `).join("")}
-      </div>
-    </div>
-  `;
-}
-
-function renderTreemapPreview(rows, columns, numericColumns) {
-  const valueColumn = chooseValueColumn(numericColumns);
-  const labelColumn = chooseLabelColumn(columns, valueColumn);
-  const chartRows = rows
-    .map((row) => ({
-      label: formatChartLabel(row, labelColumn, columns),
-      value: Math.max(toNumber(row[valueColumn]) || 0, 0)
-    }))
-    .slice(0, 8);
-  const total = chartRows.reduce((sum, row) => sum + row.value, 0) || 1;
-
-  return `
-    <div class="mini-chart treemap-chart">
-      ${chartRows.map((row, index) => {
-        const weight = Math.max((row.value / total) * 100, 12);
-        return `
-          <div class="tree-tile stack-color-${index % 5}" style="flex-basis:${weight}%">
-            <strong>${escapeHtml(row.label)}</strong>
-            <span>${escapeHtml(formatNumber(row.value))}</span>
-          </div>
-        `;
-      }).join("")}
-    </div>
-  `;
-}
-
-function renderFunnelPreview(rows, columns, numericColumns) {
-  const valueColumn = chooseValueColumn(numericColumns);
-  const labelColumn = chooseLabelColumn(columns, valueColumn);
-  const chartRows = rows
-    .map((row) => ({
-      label: formatChartLabel(row, labelColumn, columns),
-      value: Math.max(toNumber(row[valueColumn]) || 0, 0)
-    }))
-    .slice(0, 6);
-  const maxValue = Math.max(...chartRows.map((row) => row.value), 1);
-
-  return `
-    <div class="mini-chart funnel-chart">
-      ${chartRows.map((row, index) => {
-        const width = Math.max((row.value / maxValue) * 100, 18);
-        return `
-          <div class="funnel-step" style="width:${width}%">
-            <span>${escapeHtml(index + 1)}</span>
-            <strong>${escapeHtml(row.label)}</strong>
-            <em>${escapeHtml(formatNumber(row.value))}</em>
-          </div>
-        `;
-      }).join("")}
-    </div>
-  `;
-}
-
-function renderScatterPreview(rows, columns, numericColumns) {
-  const hasTwoNumericAxes = numericColumns.length > 1;
-  const xColumn = hasTwoNumericAxes ? numericColumns[0] : "category_index";
-  const yColumn = hasTwoNumericAxes ? numericColumns[1] : numericColumns[0];
-  const labelColumn = chooseLabelColumn(columns, yColumn);
-  const values = rows.slice(0, 12).map((row, index) => ({
-    label: formatChartLabel(row, labelColumn, columns),
-    x: hasTwoNumericAxes ? toNumber(row[xColumn]) || 0 : index + 1,
-    y: toNumber(row[yColumn]) || 0
-  }));
-  const maxX = hasTwoNumericAxes ? Math.max(...values.map((point) => Math.abs(point.x)), 1) : Math.max(values.length, 1);
-  const maxY = Math.max(...values.map((point) => Math.abs(point.y)), 1);
-
-  return `
-    <div class="mini-chart scatter-chart">
-      <div class="scatter-plot">
-        ${values.map((point, index) => {
-          const left = hasTwoNumericAxes
-            ? Math.min(Math.max((Math.abs(point.x) / maxX) * 86 + 7, 7), 93)
-            : values.length === 1 ? 50 : 8 + (index / (values.length - 1)) * 84;
-          const bottom = Math.min(Math.max((Math.abs(point.y) / maxY) * 78 + 10, 10), 88);
-          return `<span class="stack-color-${index % 5}" style="left:${left}%; bottom:${bottom}%" title="${escapeHtml(point.label)}"></span>`;
-        }).join("")}
-      </div>
-      <div class="scatter-meta"><span>${escapeHtml(hasTwoNumericAxes ? xColumn : labelColumn)}</span><strong>${escapeHtml(yColumn)}</strong></div>
-      <div class="scatter-legend">
-        ${values.map((point, index) => `<span><i class="stack-color-${index % 5}"></i>${escapeHtml(point.label)}</span>`).join("")}
-      </div>
-    </div>
-  `;
-}
-
-function renderGanttPreview(metric, rows, columns) {
-  const titleColumn = columns.find((column) => /name|supplier|vendor|order|po|delivery|status/i.test(column)) || columns[0];
-  const dateColumns = columns.filter((column) => /date|period|eta|due|planned|actual/i.test(column));
-  const startColumn = dateColumns[0];
-  const endColumn = dateColumns[1] || dateColumns[0];
-
-  if (!startColumn) {
-    return renderListPreview(metric, rows, columns);
-  }
-
-  return `
-    <div class="mini-chart gantt-chart">
-      ${rows.slice(0, 6).map((row, index) => `
-        <div class="gantt-row">
-          <strong>${escapeHtml(row[titleColumn] ?? metric.title)}</strong>
-          <div><i class="stack-color-${index % 5}" style="left:${8 + (index % 4) * 10}%; width:${42 + (index % 3) * 12}%"></i></div>
-          <span>${escapeHtml(row[startColumn] ?? "-")}${endColumn !== startColumn ? ` ~ ${escapeHtml(row[endColumn] ?? "-")}` : ""}</span>
-        </div>
-      `).join("")}
-    </div>
-  `;
-}
-
-function renderStackedBarPreview(rows, columns, numericColumns) {
-  const valueColumn = chooseValueColumn(numericColumns);
-  const labelColumn = chooseLabelColumn(columns, valueColumn);
-  const segmentColumn = columns.find((column) => column !== valueColumn && column !== labelColumn) || labelColumn;
-  const grouped = new Map();
-
-  rows.forEach((row) => {
-    const label = row[labelColumn] ?? "-";
-    const segment = row[segmentColumn] ?? "-";
-    const value = toNumber(row[valueColumn]) || 0;
-    if (!grouped.has(label)) {
-      grouped.set(label, {label, segments: [], total: 0});
-    }
-    grouped.get(label).segments.push({segment, value});
-    grouped.get(label).total += value;
-  });
-
-  const chartRows = [...grouped.values()].slice(0, 6);
-  const maxTotal = Math.max(...chartRows.map((row) => Math.abs(row.total)), 1);
-
-  return `
-    <div class="mini-chart stacked-chart">
-      ${chartRows.map((row) => `
-        <div class="stacked-row">
-          <span>${escapeHtml(row.label)}</span>
-          <div class="stacked-track">
-            ${row.segments.map((segment, index) => {
-              const width = Math.max((Math.abs(segment.value) / maxTotal) * 100, 4);
-              return `<i class="stack-color-${index % 5}" style="width:${width}%" title="${escapeHtml(segment.segment)}"></i>`;
-            }).join("")}
-          </div>
-          <strong>${escapeHtml(formatNumber(row.total))}</strong>
-        </div>
-      `).join("")}
-    </div>
-  `;
-}
-
-function renderStatusBarPreview(rows, columns, numericColumns) {
-  const labelColumn = chooseLabelColumn(columns, numericColumns[0]);
-  const valueColumns = numericColumns.slice(0, 2);
-  const maxValue = Math.max(...rows.flatMap((row) => valueColumns.map((column) => Math.abs(toNumber(row[column]) || 0))), 1);
-
-  return `
-    <div class="mini-chart status-chart">
-      ${rows.slice(0, 6).map((row) => `
-        <div class="status-row">
-          <strong>${escapeHtml(formatChartLabel(row, labelColumn, columns))}</strong>
-          ${valueColumns.map((column, index) => {
-            const value = toNumber(row[column]) || 0;
-            const width = Math.max((Math.abs(value) / maxValue) * 100, 3);
-            return `
-              <div class="status-meter">
-                <span>${escapeHtml(column)}</span>
-                <div><i class="stack-color-${index}" style="width:${width}%"></i></div>
-                <em>${escapeHtml(formatNumber(value))}</em>
-              </div>
-            `;
-          }).join("")}
-        </div>
-      `).join("")}
-    </div>
-  `;
-}
-
-function renderCalendarPreview(metric, rows, columns) {
-  const dateColumn = columns.find((column) => /date|period|month/i.test(column));
-  const titleColumn = columns.find((column) => /name|title|product/i.test(column)) || columns[0];
-  const metaColumn = columns.find((column) => column !== dateColumn && column !== titleColumn) || titleColumn;
-  if (!dateColumn) {
-    return renderTimelinePreview(metric, rows, columns);
-  }
-
-  return `
-    <div class="mini-chart calendar-chart">
-      ${rows.slice(0, 6).map((row) => {
-        const dateText = String(row[dateColumn] ?? "-");
-        const parts = dateText.split("-");
-        return `
-          <div class="calendar-card">
-            <div>
-              <span>${escapeHtml(parts[1] || dateText)}</span>
-              <strong>${escapeHtml(parts[2] || "")}</strong>
-            </div>
-            <p>${escapeHtml(row[titleColumn] ?? metric.title)}</p>
-            <small>${escapeHtml(row[metaColumn] ?? "")}</small>
-          </div>
-        `;
-      }).join("")}
-    </div>
-  `;
-}
-
-function renderBarPreview(rows, columns, numericColumns) {
-  const valueColumn = chooseValueColumn(numericColumns);
-  const labelColumn = chooseLabelColumn(columns, valueColumn);
-  const chartRows = rows
-    .map((row) => ({
-      label: formatChartLabel(row, labelColumn, columns),
-      value: toNumber(row[valueColumn]) || 0
-    }))
-    .slice(0, 6);
-  const maxValue = Math.max(...chartRows.map((row) => Math.abs(row.value)), 1);
-
-  return `
-    <div class="mini-chart bar-chart">
-      ${chartRows.map((row) => {
-        const width = Math.max((Math.abs(row.value) / maxValue) * 100, 3);
-        return `
-          <div class="bar-row">
-            <span class="bar-label">${escapeHtml(row.label)}</span>
-            <div class="bar-track"><span class="bar-fill" style="width:${width}%"></span></div>
-            <strong>${escapeHtml(formatNumber(row.value))}</strong>
-          </div>
-        `;
-      }).join("")}
-    </div>
-  `;
-}
-
-function renderGaugePreview(rows, columns, numericColumns) {
-  const valueColumn = chooseValueColumn(numericColumns);
-  const labelColumn = chooseLabelColumn(columns, valueColumn);
-  const values = rows.map((row) => toNumber(row[valueColumn])).filter((value) => value !== null);
-  const total = values.reduce((sum, value) => sum + value, 0);
-  const maxValue = Math.max(...values.map((value) => Math.abs(value)), 1);
-  const percent = Math.min(Math.round((Math.abs(total) / Math.max(maxValue, Math.abs(total))) * 100), 100);
-
-  return `
-    <div class="mini-chart gauge-chart">
-      <div class="gauge-ring" style="--gauge:${percent}%">
-        <strong>${escapeHtml(formatNumber(total))}</strong>
-        <span>${escapeHtml(valueColumn)}</span>
-      </div>
-      <div class="gauge-list">
-        ${rows.slice(0, 4).map((row) => `
-          <div><span>${escapeHtml(formatChartLabel(row, labelColumn, columns))}</span><strong>${escapeHtml(formatNumber(toNumber(row[valueColumn]) || 0))}</strong></div>
-        `).join("")}
-      </div>
-    </div>
-  `;
-}
-
-function renderDonutPreview(rows, columns, numericColumns) {
-  const valueColumn = chooseValueColumn(numericColumns);
-  const labelColumn = chooseLabelColumn(columns, valueColumn);
-  const allRows = rows
-    .map((row) => ({
-      label: formatChartLabel(row, labelColumn, columns),
-      value: Math.max(toNumber(row[valueColumn]) || 0, 0)
-    }))
-    .filter((row) => row.value > 0);
-  const visibleRows = allRows.slice(0, 5);
-  const hiddenTotal = allRows.slice(5).reduce((sum, row) => sum + row.value, 0);
-  const chartRows = hiddenTotal > 0
-    ? [...visibleRows.slice(0, 4), {label: "기타", value: hiddenTotal}]
-    : visibleRows;
-  const total = chartRows.reduce((sum, row) => sum + row.value, 0) || 1;
-  let current = 0;
-  const segments = chartRows.flatMap((row, index) => {
-    const start = current;
-    const end = current + (row.value / total) * 100;
-    current = end;
-    const gap = chartRows.length > 1 ? Math.min(0.85, Math.max((end - start) * 0.12, 0.25)) : 0;
-    const colorEnd = Math.max(start, end - gap);
-    return [
-      `var(--chart-${index % 5}) ${start}% ${colorEnd}%`,
-      `var(--surface) ${colorEnd}% ${end}%`
-    ];
-  }).join(", ");
-
-  return `
-    <div class="mini-chart donut-chart">
-      <div class="donut-ring" style="--segments:${segments}">
-        <strong>${escapeHtml(formatNumber(total))}</strong>
-        <span>${escapeHtml(valueColumn)}</span>
-      </div>
-      <div class="donut-list">
-        ${chartRows.map((row, index) => {
-          const percent = Math.round((row.value / total) * 100);
-          return `
-            <div class="donut-row">
-              <i class="donut-marker stack-color-${index % 5}"></i>
-              <span>${escapeHtml(row.label)}</span>
-              <div class="donut-track"><span class="stack-color-${index % 5}" style="width:${Math.max(percent, 3)}%"></span></div>
-              <strong>${escapeHtml(formatNumber(row.value))}</strong>
-            </div>
-          `;
-        }).join("")}
-      </div>
-    </div>
-  `;
-}
-
-function renderLinePreview(rows, columns, numericColumns) {
-  const valueColumn = chooseValueColumn(numericColumns);
-  const values = rows.map((row) => toNumber(row[valueColumn]) || 0).slice(0, 12);
-  const maxValue = Math.max(...values.map((value) => Math.abs(value)), 1);
-  const points = values.map((value, index) => {
-    const x = values.length === 1 ? 50 : (index / (values.length - 1)) * 100;
-    const y = 90 - (Math.abs(value) / maxValue) * 75;
-    return `${x},${y}`;
-  }).join(" ");
-
-  return `
-    <div class="mini-chart line-chart">
-      <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <polyline points="${points}" />
-      </svg>
-      <div class="line-meta"><span>${escapeHtml(valueColumn)}</span><strong>${escapeHtml(values.map(formatNumber).join(" -> "))}</strong></div>
-    </div>
-  `;
-}
-
-function renderTimelinePreview(metric, rows, columns) {
-  const dateColumn = columns.find((column) => /date|period|month/i.test(column));
-  const labelColumn = columns.find((column) => /name|title|status|type/i.test(column)) || columns[0];
-  if (!dateColumn) {
-    return "";
-  }
-
-  return `
-    <div class="mini-chart timeline-chart">
-      ${rows.slice(0, 5).map((row) => `
-        <div class="timeline-row">
-          <span>${escapeHtml(row[dateColumn] ?? "-")}</span>
-          <strong>${escapeHtml(row[labelColumn] ?? metric.title)}</strong>
-        </div>
-      `).join("")}
-    </div>
-  `;
-}
-
-function renderDashboardRows(columns, rows) {
-  if (!rows.length) {
-    return '<div class="empty-state">조회된 행이 없습니다.</div>';
-  }
-
-  const visibleRows = rows.slice(0, 8);
-  return `
-    <details class="dashboard-detail-table">
-      <summary>상세 데이터 보기 · ${escapeHtml(rows.length)} rows${rows.length > visibleRows.length ? " · first 8 shown" : ""}</summary>
-      <div class="dashboard-table-wrap">
-        <table class="dashboard-table">
-          <thead>
-            <tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr>
-          </thead>
-          <tbody>
-            ${visibleRows.map((row) => `
-              <tr>${columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
-    </details>
-  `;
-}
-
-function chooseValueColumn(numericColumns) {
-  return numericColumns.find((column) => /count|total|sum|amount|sales|quantity|units|rate|score|headcount|clicks|impressions|overdue/i.test(column))
-    || numericColumns[numericColumns.length - 1];
-}
-
-function chooseLabelColumn(columns, valueColumn) {
-  return columns.find((column) => column !== valueColumn && /name|status|type|severity|department|platform|channel|line|period|grade|category|product/i.test(column))
-    || columns.find((column) => column !== valueColumn)
-    || columns[0];
-}
-
-function formatChartLabel(row, labelColumn, columns) {
-  const secondaryColumn = columns.find((column) => column !== labelColumn && /status|type|severity|channel|period|line/i.test(column));
-  const label = row[labelColumn] ?? "-";
-  const secondary = secondaryColumn && row[secondaryColumn] !== undefined ? ` · ${row[secondaryColumn]}` : "";
-  return `${label}${secondary}`;
-}
-
-function toNumber(value) {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
-  const number = Number(String(value).replaceAll(",", ""));
-  return Number.isFinite(number) ? number : null;
-}
-
-function formatNumber(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) {
-    return String(value ?? "-");
-  }
-  return new Intl.NumberFormat("ko-KR", {maximumFractionDigits: 2}).format(number);
 }
 
 async function loadSqlLogs(page = 1) {
@@ -1105,7 +556,6 @@ async function loadSqlLogs(page = 1) {
   const dateTo = document.getElementById("sqlDateTo").value;
   const role = document.getElementById("sqlRoleFilter").value;
   const status = document.getElementById("sqlStatusFilter").value;
-  const source = document.getElementById("sqlSourceFilter").value;
   const table = document.getElementById("sqlTableFilter").value.trim();
 
   if (dateFrom) {
@@ -1122,9 +572,6 @@ async function loadSqlLogs(page = 1) {
   if (status) {
     params.set("status", status);
   }
-  if (source) {
-    params.set("source", source);
-  }
   if (table) {
     params.set("table", table);
   }
@@ -1134,6 +581,7 @@ async function loadSqlLogs(page = 1) {
   sqlLogs = Array.isArray(payload) ? payload : payload.logs || [];
   sqlLogPage = Array.isArray(payload) ? 1 : payload.page || 1;
   sqlLogTotalPages = Array.isArray(payload) ? 1 : payload.total_pages || 1;
+  expandedSqlLogIndex = null;
 
   renderSqlLogs();
   if (sqlLogs.length) {
@@ -1142,50 +590,6 @@ async function loadSqlLogs(page = 1) {
     document.getElementById("sqlLogDetail").textContent = "조건에 맞는 로그가 없습니다.";
   }
   renderSqlLogPagination(Array.isArray(payload) ? sqlLogs.length : payload.total || 0);
-}
-
-function renderSqlLogs() {
-  const target = document.getElementById("sqlLogRows");
-  if (!sqlLogs.length) {
-    target.innerHTML = '<tr><td colspan="6">조건에 맞는 로그가 없습니다.</td></tr>';
-    return;
-  }
-
-  target.innerHTML = sqlLogs.map((log, index) => `
-    <tr data-index="${index}">
-      <td>${escapeHtml(formatKoreanTime(log.query_time))}</td>
-      <td>${escapeHtml(log.table_name)}</td>
-      <td>${escapeHtml(String(log.row_count))}</td>
-      <td>${escapeHtml(String(log.column_count))}</td>
-      <td>${escapeHtml(log.actor)}</td>
-      <td><span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status)}</span></td>
-    </tr>
-  `).join("");
-
-  document.querySelectorAll("#sqlLogRows tr").forEach((row) => {
-    row.addEventListener("click", () => {
-      renderSqlLogDetail(sqlLogs[Number(row.dataset.index)]);
-    });
-  });
-}
-
-function renderSqlLogPagination(total) {
-  document.getElementById("sqlLogPageInfo").textContent = `Page ${sqlLogPage} / ${sqlLogTotalPages} · ${total} logs`;
-  document.getElementById("prevSqlLogPage").disabled = sqlLogPage <= 1;
-  document.getElementById("nextSqlLogPage").disabled = sqlLogPage >= sqlLogTotalPages;
-}
-
-function renderSqlLogDetail(log) {
-  document.getElementById("sqlLogDetail").innerHTML = `
-    <div class="detail-row"><span>Request ID</span><strong>${escapeHtml(log.request_id)}</strong></div>
-    <div class="detail-row"><span>조회 시간</span><strong>${escapeHtml(formatKoreanTime(log.query_time))}</strong></div>
-    <div class="detail-row"><span>Table</span><strong>${escapeHtml(log.table_name)}</strong></div>
-    <div class="detail-row"><span>Rows</span><strong>${escapeHtml(String(log.row_count))}</strong></div>
-    <div class="detail-row"><span>Columns</span><strong>${escapeHtml((log.columns || []).join(", "))}</strong></div>
-    <div class="detail-row"><span>Actor</span><strong>${escapeHtml(log.actor)}</strong></div>
-    <div class="detail-row"><span>Status</span><strong>${escapeHtml(log.status)}</strong></div>
-    <div class="detail-row"><span>SQL</span><code>${escapeHtml(log.sql)}</code></div>
-  `;
 }
 
 function getStatusBadgeClass(status) {
@@ -1392,25 +796,31 @@ function renderSqlLogPagination(total) {
 function renderSqlLogs() {
   const target = document.getElementById("sqlLogRows");
   if (!sqlLogs.length) {
-    target.innerHTML = '<tr><td colspan="7">조건에 맞는 로그가 없습니다.</td></tr>';
+    target.innerHTML = '<tr><td colspan="6">조건에 맞는 로그가 없습니다.</td></tr>';
     return;
   }
 
-  target.innerHTML = sqlLogs.map((log, index) => `
-    <tr data-index="${index}">
-      <td>${escapeHtml(formatKoreanTime(log.query_time))}</td>
-      <td><span class="badge neutral">${escapeHtml(formatChatSource(log.chat_source))}</span></td>
-      <td>${escapeHtml(log.table_name)}</td>
-      <td>${escapeHtml(String(log.row_count))}</td>
-      <td>${escapeHtml(String(log.column_count))}</td>
-      <td>${escapeHtml(log.actor)}</td>
-      <td><span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status)}</span></td>
-    </tr>
-  `).join("");
+  target.innerHTML = sqlLogs.map((log, index) => {
+    const isExpanded = expandedSqlLogIndex === index;
+    return `
+      <tr data-index="${index}" class="${isExpanded ? "log-row-expanded" : ""}">
+        <td>${escapeHtml(formatKoreanTime(log.query_time))}</td>
+        <td><span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status)}</span></td>
+        <td>${escapeHtml(log.actor)}</td>
+        <td class="log-question-cell" title="${escapeHtml(formatLogQuestion(log))}">${escapeHtml(formatLogQuestionPreview(log))}</td>
+        <td>${escapeHtml(String(log.row_count))}</td>
+        <td>${escapeHtml(String(log.column_count))}</td>
+      </tr>
+      ${isExpanded ? renderSqlLogConversation(log) : ""}
+    `;
+  }).join("");
 
-  document.querySelectorAll("#sqlLogRows tr").forEach((row) => {
+  document.querySelectorAll("#sqlLogRows tr[data-index]").forEach((row) => {
     row.addEventListener("click", () => {
-      renderSqlLogDetail(sqlLogs[Number(row.dataset.index)]);
+      const index = Number(row.dataset.index);
+      expandedSqlLogIndex = expandedSqlLogIndex === index ? null : index;
+      renderSqlLogDetail(sqlLogs[index]);
+      renderSqlLogs();
     });
   });
 }
@@ -1419,7 +829,7 @@ function renderSqlLogDetail(log) {
   document.getElementById("sqlLogDetail").innerHTML = `
     <div class="detail-row"><span>Request ID</span><strong>${escapeHtml(log.request_id)}</strong></div>
     <div class="detail-row"><span>조회 시간</span><strong>${escapeHtml(formatKoreanTime(log.query_time))}</strong></div>
-    <div class="detail-row"><span>채팅 출처</span><strong>${escapeHtml(formatChatSource(log.chat_source))}</strong></div>
+    <div class="detail-row"><span>질문</span><strong>${escapeHtml(formatLogQuestion(log))}</strong></div>
     <div class="detail-row"><span>Table</span><strong>${escapeHtml(log.table_name)}</strong></div>
     <div class="detail-row"><span>Rows</span><strong>${escapeHtml(String(log.row_count))}</strong></div>
     <div class="detail-row"><span>Columns</span><strong>${escapeHtml((log.columns || []).join(", "))}</strong></div>
@@ -1429,13 +839,44 @@ function renderSqlLogDetail(log) {
   `;
 }
 
-function formatChatSource(value) {
-  const source = String(value || "").toLowerCase();
-  if (source === "user") {
-    return "일반 Chat";
+function renderSqlLogConversation(log) {
+  const answer = formatLogAnswer(log);
+  return `
+    <tr class="log-conversation-row">
+      <td colspan="6">
+        <section class="log-conversation">
+          <div class="log-conversation-header">
+            <strong>대화 기록</strong>
+            <span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status || "UNKNOWN")}</span>
+          </div>
+          <div class="log-conversation-turn user-turn">
+            <span>Question</span>
+            <p>${escapeHtml(formatLogQuestion(log))}</p>
+          </div>
+          <div class="log-conversation-turn assistant-turn">
+            <span>Response</span>
+            ${answer ? `<div class="answer-body">${renderAnswer(answer)}</div>` : "<p>이 로그에는 아직 LLM 답변 기록이 없습니다. 새 노트북으로 실행된 로그부터 표시됩니다.</p>"}
+          </div>
+        </section>
+      </td>
+    </tr>
+  `;
+}
+
+function formatLogQuestion(log) {
+  const question = log?.question || log?.user_question || log?.query || log?.raw_question || "";
+  return String(question || "-");
+}
+
+function formatLogQuestionPreview(log, maxLength = 42) {
+  const question = formatLogQuestion(log).replace(/\s+/g, " ").trim();
+  if (question.length <= maxLength) {
+    return question;
   }
-  if (source === "admin_simulation") {
-    return "Admin Chat";
-  }
-  return value || "-";
+  return `${question.slice(0, maxLength).trimEnd()}...`;
+}
+
+function formatLogAnswer(log) {
+  const answer = log?.llm_answer || log?.answer || log?.response || log?.summary || "";
+  return String(answer || "");
 }

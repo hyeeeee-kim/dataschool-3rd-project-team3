@@ -4,7 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>COSBELLE RAG Admin Console</title>
-  <link rel="stylesheet" href="/static/admin.css?v=admin-sticky-bottom" />
+  <link rel="stylesheet" href="/static/admin.css?v=tab-fix-2" />
+  <link rel="stylesheet" href="/static/data_dashboard.css?v=1" />
 </head>
 <body>
   <aside class="sidebar">
@@ -15,11 +16,11 @@
     </div>
 
     <nav class="side-nav">
-      <button class="active" data-target="overview">Overview</button>
-      <button data-target="simulator">Admin Chat</button>
-      <button data-target="adminDisplay">Admin Sources</button>
-      <button data-target="dashboard">Dashboards</button>
-      <button data-target="sqlLogs">SQL Logs</button>
+      <button class="active" type="button" data-target="overview">Overview</button>
+      <button type="button" data-target="simulator">Admin Chat</button>
+      <button type="button" data-target="adminDisplay">Admin Sources</button>
+      <button type="button" data-target="dashboard">Dashboards</button>
+      <button type="button" data-target="sqlLogs">SQL Logs</button>
     </nav>
 
     <div class="sidebar-bottom">
@@ -110,19 +111,56 @@
     </section>
 
     <section id="dashboard" class="view">
-      <div class="dashboard-grid data-dashboard-grid">
+      <div class="dashboard-grid">
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">LLM operations</p>
+              <h2>전체 Dashboard</h2>
+            </div>
+            <button class="secondary" type="button" id="refreshDashboard">Refresh</button>
+          </div>
+          <div class="metrics" id="llmMetrics"></div>
+        </div>
+
+        <div class="panel">
+          <p class="eyebrow">Database output</p>
+          <h2>Database Dashboard</h2>
+          <div class="metrics" id="databaseMetrics"></div>
+        </div>
+
         <div class="panel role-dashboard">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Role dashboard</p>
+              <h2>Role별 접근 가능 데이터</h2>
+            </div>
+            <select id="dashboardRole"></select>
+          </div>
+          <div id="roleAccessSummary" class="role-access-summary"></div>
+        </div>
+
+        <div class="panel data-dashboard-panel">
           <div class="panel-heading">
             <div>
               <p class="eyebrow">Databricks DB dashboard</p>
               <h2>Role별 실제 데이터 Dashboard</h2>
             </div>
-            <div class="dashboard-actions">
-              <select id="dashboardRole"></select>
-              <button class="secondary" type="button" id="refreshDashboard">Refresh</button>
+            <div class="data-dashboard-actions">
+              <select id="dataDashboardRole"></select>
+              <button class="secondary" type="button" id="refreshDataDashboard">Refresh</button>
             </div>
           </div>
-          <div id="roleAccessSummary" class="role-access-summary"></div>
+          <div id="dataDashboardStatus" class="data-dashboard-status"></div>
+          <div id="dataDashboardProfile" class="data-dashboard-profile"></div>
+          <div class="data-dashboard-section">
+            <h3>전사 공통</h3>
+            <div id="dataDashboardCommon" class="data-dashboard-grid"></div>
+          </div>
+          <div class="data-dashboard-section">
+            <h3>역할 전용</h3>
+            <div id="dataDashboardRoleMetrics" class="data-dashboard-grid"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -163,14 +201,6 @@
             </select>
           </label>
           <label>
-            채팅 출처
-            <select id="sqlSourceFilter">
-              <option value="">전체 출처</option>
-              <option value="user">일반 Chat</option>
-              <option value="admin_simulation">Admin Chat</option>
-            </select>
-          </label>
-          <label>
             테이블
             <input id="sqlTableFilter" type="search" placeholder="테이블명" />
           </label>
@@ -183,16 +213,15 @@
               <thead>
                 <tr>
                   <th>조회 시간</th>
-                  <th>채팅 출처</th>
-                  <th>Table</th>
+                  <th>Status</th>
+                  <th>Actor</th>
+                  <th>질문</th>
                   <th>Rows</th>
                   <th>Columns</th>
-                  <th>Actor</th>
-                  <th>Status</th>
                 </tr>
               </thead>
               <tbody id="sqlLogRows">
-                <tr><td colspan="7">아직 로드된 로그가 없습니다.</td></tr>
+                <tr><td colspan="6">아직 로드된 로그가 없습니다.</td></tr>
               </tbody>
             </table>
           </div>
@@ -292,6 +321,7 @@
     </section>
   </main>
 
-  <script src="/static/admin.js?v=db-role-dashboard-v8"></script>
+  <script src="/static/admin.js?v=tab-fix-2"></script>
+  <script src="/static/data_dashboard.js?v=1"></script>
 </body>
 </html>
