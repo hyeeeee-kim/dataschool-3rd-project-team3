@@ -877,7 +877,7 @@ function renderSqlLogConversation(log) {
 
 function formatLogQuestion(log) {
   const question = log?.question || log?.user_question || log?.query || log?.raw_question || "";
-  return String(question || log?.table_name || "-");
+  return String(question || "-");
 }
 
 function formatLogQuestionPreview(log, maxLength = 42) {

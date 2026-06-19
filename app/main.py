@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from app.rag_service import call_direct_rag, direct_backend_configured
+from app.sql_log_service import fetch_sql_logs as fetch_databricks_sql_logs
 
 
 load_dotenv()
@@ -489,6 +490,21 @@ def sql_logs(
     date_from: str = "",
     date_to: str = "",
 ):
+    table_payload = fetch_databricks_sql_logs(
+        page=page,
+        page_size=page_size,
+        days=days,
+        role=role,
+        status=status,
+        table=table,
+        source=source,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    if table_payload.get("source") == "databricks_table":
+        table_payload["retention_note"] = "Logs are loaded from cos_adb.governance.rag_sql_query_logs."
+        return table_payload
+
     page = max(page, 1)
     page_size = min(max(page_size, 1), 50)
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
@@ -522,6 +538,7 @@ def sql_logs(
     end = start + page_size
 
     return {
+        "source": "memory_fallback",
         "logs": filtered[start:end],
         "page": page,
         "page_size": page_size,
