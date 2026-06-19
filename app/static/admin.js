@@ -108,7 +108,7 @@ function setAdminProgress(message) {
 function startAdminProgress() {
   stopAdminProgress();
   const steps = [
-    {status: "RUNNING", message: "Databricks Job 실행 요청을 전송 중입니다."},
+    {status: "RUNNING", message: "요청을 전송 중입니다."},
     {status: "RUNNING", message: "Role과 pre-check 조건을 확인 중입니다."},
     {status: "RUNNING", message: "SQL 검색과 Vector/RAG 근거를 조회 중입니다."},
     {status: "RUNNING", message: "LLM 답변을 생성 중입니다."},
