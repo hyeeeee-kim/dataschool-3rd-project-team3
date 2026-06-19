@@ -240,7 +240,7 @@ function setPublicProgress(message) {
 function startPublicProgress(pendingMessage = null) {
   stopPublicProgress();
   const steps = [
-    {status: "RUNNING", message: "요청을 Databricks Job으로 전송 중입니다."},
+    {status: "RUNNING", message: "요청을 전송 중입니다."},
     {status: "RUNNING", message: "선택한 Role 기준으로 권한을 확인 중입니다."},
     {status: "RUNNING", message: "관련 SQL과 근거 데이터를 검색 중입니다."},
     {status: "RUNNING", message: "검색 결과를 바탕으로 답변을 생성 중입니다."},
