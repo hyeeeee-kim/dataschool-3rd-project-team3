@@ -232,6 +232,8 @@ textarea {
   border-radius: 8px;
   padding: 12px;
   box-shadow: 0 12px 28px rgba(37, 42, 64, 0.09);
+  position: relative;
+  z-index: 3;
 }
 
 .side-nav button {
@@ -244,6 +246,8 @@ textarea {
   padding: 12px 14px;
   cursor: pointer;
   font-weight: 700;
+  position: relative;
+  z-index: 3;
 }
 
 .side-nav button.active,

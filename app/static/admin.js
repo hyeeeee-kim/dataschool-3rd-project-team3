@@ -14,9 +14,16 @@ let expandedSqlLogIndex = null;
 let roles = [];
 let adminProgressTimer = null;
 
-document.querySelectorAll(".side-nav button").forEach((button) => {
-  button.addEventListener("click", () => showView(button.dataset.target, button));
-});
+const sideNav = document.querySelector(".side-nav");
+if (sideNav) {
+  sideNav.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-target]");
+    if (!button || !sideNav.contains(button)) {
+      return;
+    }
+    showView(button.dataset.target, button);
+  });
+}
 
 document.getElementById("simulateForm").addEventListener("submit", (event) => {
   event.preventDefault();
@@ -58,6 +65,15 @@ function showView(id, button) {
   if (id === "adminDisplay") {
     renderAdminSources();
   }
+  if (id === "sqlLogs") {
+    loadSqlLogs(1);
+  }
+}
+
+function setSelectValue(selectId, value) {
+  const select = document.getElementById(selectId);
+  const exists = Array.from(select.options).some((option) => option.value === value || option.textContent === value);
+  if (!exists) {
     const option = document.createElement("option");
     option.value = value;
     option.textContent = value;
@@ -327,6 +343,53 @@ function renderAdminSources() {
     <div>table_source_count: ${escapeHtml(String(tables.length))}</div>
     <div>document_source_count: ${escapeHtml(String(documents.length))}</div>
   `;
+}
+
+async function loadRoles() {
+  if (roles.length) {
+    return roles;
+  }
+
+  const response = await fetch("/api/admin/roles");
+  roles = await response.json();
+
+  const options = roles.map((role) => `
+    <option value="${escapeHtml(role.role_id)}">${escapeHtml(role.role_id)}</option>
+  `).join("");
+  document.getElementById("role").innerHTML = options;
+  document.getElementById("dashboardRole").innerHTML = options;
+  document.getElementById("sqlRoleFilter").innerHTML = `<option value="">전체 역할</option>${options}`;
+
+  if (roles.length) {
+    const adminRoleSelect = document.getElementById("role");
+    adminRoleSelect.value = roles.some((role) => role.role_id === "MARKETING_STAFF")
+      ? "MARKETING_STAFF"
+      : roles[0].role_id;
+    applyRoleDefaults(adminRoleSelect.value);
+  }
+
+  return roles;
+}
+
+function applyRoleDefaults(roleId) {
+  const role = roles.find((item) => item.role_id === roleId);
+  if (role) {
+    setSelectValue("department", role.department);
+    setSelectValue("clearance", role.default_clearance);
+  }
+  syncProfile();
+}
+
+function setSelectValue(selectId, value) {
+  const select = document.getElementById(selectId);
+  const exists = Array.from(select.options).some((option) => option.value === value || option.textContent === value);
+  if (!exists) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  }
+  select.value = value;
 }
 
 function getSourceTables(data) {

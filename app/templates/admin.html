@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>COSBELLE RAG Admin Console</title>
-  <link rel="stylesheet" href="/static/admin.css?v=contained-log-conversation" />
+  <link rel="stylesheet" href="/static/admin.css?v=tab-fix-2" />
 </head>
 <body>
   <aside class="sidebar">
@@ -15,11 +15,11 @@
     </div>
 
     <nav class="side-nav">
-      <button class="active" data-target="overview">Overview</button>
-      <button data-target="simulator">Admin Chat</button>
-      <button data-target="adminDisplay">Admin Sources</button>
-      <button data-target="dashboard">Dashboards</button>
-      <button data-target="sqlLogs">SQL Logs</button>
+      <button class="active" type="button" data-target="overview">Overview</button>
+      <button type="button" data-target="simulator">Admin Chat</button>
+      <button type="button" data-target="adminDisplay">Admin Sources</button>
+      <button type="button" data-target="dashboard">Dashboards</button>
+      <button type="button" data-target="sqlLogs">SQL Logs</button>
     </nav>
 
     <div class="sidebar-bottom">
@@ -306,6 +306,6 @@
     </section>
   </main>
 
-  <script src="/static/admin.js?v=log-conversation"></script>
+  <script src="/static/admin.js?v=tab-fix-2"></script>
 </body>
 </html>
