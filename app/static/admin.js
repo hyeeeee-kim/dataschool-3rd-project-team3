@@ -38,14 +38,20 @@ document.getElementById("role").addEventListener("change", (event) => {
   document.getElementById(id).addEventListener("change", syncProfile);
 });
 
-document.getElementById("refreshDashboard").addEventListener("click", loadDashboards);
+const refreshDashboardButton = document.getElementById("refreshDashboard");
+if (refreshDashboardButton) {
+  refreshDashboardButton.addEventListener("click", loadDashboards);
+}
 document.getElementById("refreshSqlLogs").addEventListener("click", () => loadSqlLogs(sqlLogPage));
 document.getElementById("applySqlLogFilters").addEventListener("click", () => loadSqlLogs(1));
 document.getElementById("prevSqlLogPage").addEventListener("click", () => loadSqlLogs(Math.max(sqlLogPage - 1, 1)));
 document.getElementById("nextSqlLogPage").addEventListener("click", () => loadSqlLogs(Math.min(sqlLogPage + 1, sqlLogTotalPages)));
-document.getElementById("dashboardRole").addEventListener("change", (event) => {
-  loadRoleAccess(event.target.value);
-});
+const dashboardRoleSelect = document.getElementById("dashboardRole");
+if (dashboardRoleSelect) {
+  dashboardRoleSelect.addEventListener("change", (event) => {
+    loadRoleAccess(event.target.value);
+  });
+}
 document.getElementById("logoutButton").addEventListener("click", () => {
   sessionStorage.removeItem("cosbelle_admin");
   window.location.href = "/admin-login";
@@ -351,7 +357,10 @@ async function loadRoles() {
     <option value="${escapeHtml(role.role_id)}">${escapeHtml(role.role_id)}</option>
   `).join("");
   document.getElementById("role").innerHTML = options;
-  document.getElementById("dashboardRole").innerHTML = options;
+  const dashboardRole = document.getElementById("dashboardRole");
+  if (dashboardRole) {
+    dashboardRole.innerHTML = options;
+  }
   document.getElementById("sqlRoleFilter").innerHTML = `<option value="">전체 역할</option>${options}`;
 
   if (roles.length) {
@@ -471,6 +480,14 @@ function updateCheckStatus(scope, checks) {
 }
 
 async function loadDashboards() {
+  const llmMetrics = document.getElementById("llmMetrics");
+  const databaseMetrics = document.getElementById("databaseMetrics");
+  const roleAccessSummary = document.getElementById("roleAccessSummary");
+  const dashboardRole = document.getElementById("dashboardRole");
+  if (!llmMetrics || !databaseMetrics || !roleAccessSummary || !dashboardRole) {
+    return;
+  }
+
   const [llmResponse, databaseResponse] = await Promise.all([
     fetch("/api/admin/dashboard/llm"),
     fetch("/api/admin/dashboard/database")
@@ -482,7 +499,7 @@ async function loadDashboards() {
   renderMetrics("llmMetrics", llmData);
   renderMetrics("databaseMetrics", databaseData);
   await loadRoles();
-  await loadRoleAccess(document.getElementById("dashboardRole").value);
+  await loadRoleAccess(dashboardRole.value);
 }
 
 async function loadRoleAccess(roleId) {
