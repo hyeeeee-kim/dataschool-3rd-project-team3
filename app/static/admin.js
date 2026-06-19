@@ -167,13 +167,7 @@ async function simulate() {
         <strong class="status-pill running">RUNNING</strong>
       </div>
       <h3>처리 중</h3>
-      <div class="progress-steps">
-        <span>요청 전송</span>
-        <span>SQL 검색중</span>
-        <span>답변 생성중</span>
-        <span>결과 정리중</span>
-      </div>
-      <p>Databricks Job 응답을 기다리는 중입니다.</p>
+      <p>진행 상황을 확인하고 있습니다. 응답을 기다리는 중입니다.</p>
     </article>
   `;
 
