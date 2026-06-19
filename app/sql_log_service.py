@@ -1,5 +1,6 @@
 import os
 import time
+import uuid
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -107,6 +108,187 @@ def _query_dicts(sql: str) -> list[dict[str, Any]]:
     return rows
 
 
+def _truncate_text(value: Any, limit: int = 8000) -> str:
+    if value in (None, ""):
+        return ""
+    text = str(value)
+    return text[:limit]
+
+
+def _sql_literal(value: Any) -> str:
+    if value in (None, ""):
+        return "NULL"
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _sql_array(values: list[Any]) -> str:
+    if not values:
+        return "array()"
+    literals = ", ".join(_sql_literal(_truncate_text(value, 1000)) for value in values if value not in (None, ""))
+    return f"array({literals})" if literals else "array()"
+
+
+def _sql_timestamp(value: Any) -> str:
+    if value in (None, ""):
+        return "CAST(CURRENT_TIMESTAMP() AS TIMESTAMP_NTZ)"
+
+    raw = str(value).strip().replace("Z", "+00:00")
+    if "T" not in raw and " " in raw:
+        raw = raw.replace(" ", "T", 1)
+
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return "CAST(CURRENT_TIMESTAMP() AS TIMESTAMP_NTZ)"
+
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(ZoneInfo("Asia/Seoul")).replace(tzinfo=None)
+    timestamp_text = parsed.isoformat(sep=" ", timespec="seconds")
+    return f"CAST('{timestamp_text}' AS TIMESTAMP_NTZ)"
+
+
+def _derive_success_reason(result: dict[str, Any], raw: dict[str, Any], checks: dict[str, Any]) -> str:
+    if str(result.get("guard_status") or raw.get("status") or "").upper() != "SUCCESS":
+        return ""
+
+    if checks.get("post_check") == "PASS":
+        return "SQL execution and post-check passed."
+    if checks.get("pre_check") == "PASS":
+        return "SQL execution passed."
+    return "Request completed successfully."
+
+
+def _derive_failure_reason(result: dict[str, Any], raw: dict[str, Any], checks: dict[str, Any]) -> str:
+    guard_status = str(result.get("guard_status") or raw.get("status") or "UNKNOWN").upper()
+    if guard_status == "DENIED":
+        if checks.get("pre_check") == "BLOCKED":
+            return "Blocked by pre-check policy."
+        if checks.get("post_check") == "BLOCKED":
+            return "Blocked by post-check policy."
+        return "Access denied by guard policy."
+    if guard_status in {"ERROR", "FAILED", "FAILURE"}:
+        return "Query execution failed."
+    if result.get("blocked"):
+        return "Request blocked."
+    return ""
+
+
+def _derive_error_message(result: dict[str, Any], raw: dict[str, Any]) -> str:
+    guard_status = str(result.get("guard_status") or raw.get("status") or "UNKNOWN").upper()
+    if guard_status not in {"ERROR", "FAILED", "FAILURE"}:
+        return ""
+    return _truncate_text(raw.get("error") or raw.get("detail") or result.get("answer"), 4000)
+
+
+def _extract_tables(result: dict[str, Any], raw: dict[str, Any], log: dict[str, Any]) -> list[str]:
+    source_tables = result.get("sources", {}).get("tables") if isinstance(result.get("sources"), dict) else []
+    if isinstance(source_tables, list) and source_tables:
+        return [str(table) for table in source_tables if table not in (None, "")]
+
+    raw_table_access = raw.get("table_access") if isinstance(raw.get("table_access"), list) else []
+    if raw_table_access:
+        return [
+            str(item.get("table"))
+            for item in raw_table_access
+            if isinstance(item, dict) and item.get("table")
+        ]
+
+    table_name = str(log.get("table_name") or "").strip()
+    if not table_name or table_name == "-":
+        return []
+    return [part.strip() for part in table_name.split(",") if part.strip()]
+
+
+def persist_sql_log(result: dict[str, Any], payload: dict[str, Any], access: dict[str, Any]) -> bool:
+    warehouse_id = _warehouse_id()
+    if not warehouse_id:
+        return False
+
+    raw = result.get("raw") if isinstance(result.get("raw"), dict) else {}
+    sql_log = result.get("sql_log") if isinstance(result.get("sql_log"), dict) else {}
+    raw_sql_log = raw.get("sql_log") if isinstance(raw.get("sql_log"), dict) else {}
+    log = {**raw_sql_log, **sql_log}
+    checks = result.get("checks") if isinstance(result.get("checks"), dict) else {}
+
+    guard_status = str(result.get("guard_status") or raw.get("status") or log.get("status") or "UNKNOWN")
+    question = _truncate_text(result.get("query") or payload.get("query") or raw.get("question"), 4000)
+    llm_answer = _truncate_text(result.get("answer") or raw.get("answer") or raw.get("response") or raw.get("summary"), 8000)
+    generated_sql = _truncate_text(log.get("sql") or log.get("generated_sql") or raw.get("sql"), 16000)
+    tables_accessed = _extract_tables(result, raw, log)
+    columns_returned = _as_list(log.get("columns") or raw.get("columns_returned"))
+    row_count = _as_int(log.get("row_count") or log.get("row_count_returned") or raw.get("row_count_returned"))
+    runtime_ms = _as_int(log.get("query_runtime_ms") or raw.get("query_runtime_ms"))
+    blocked = bool(result.get("blocked", False))
+
+    if guard_status.upper() in {"ERROR", "FAILED", "FAILURE"}:
+        execution_status = "FAILED"
+    elif blocked or guard_status.upper() in {"BLOCKED", "DENIED"}:
+        execution_status = "DENIED"
+    else:
+        execution_status = "SUCCESS"
+
+    permission_check = _truncate_text(
+        f"mode={result.get('mode') or payload.get('mode') or '-'};pre={checks.get('pre_check') or '-'};post={checks.get('post_check') or '-'}",
+        500,
+    )
+    success_reason = _derive_success_reason(result, raw, checks)
+    failure_reason = _derive_failure_reason(result, raw, checks)
+    error_message = _derive_error_message(result, raw)
+
+    insert_sql = f"""
+    INSERT INTO {LOG_TABLE} (
+        log_id,
+        request_id,
+        query_time,
+        user_question,
+        generated_sql,
+        tables_accessed,
+        columns_returned,
+        row_count_returned,
+        execution_status,
+        success_reason,
+        failure_reason,
+        error_message,
+        query_runtime_ms,
+        user_id,
+        role_id,
+        department_id,
+        permission_check,
+        created_at,
+        llm_answer
+    )
+    VALUES (
+        {_sql_literal(str(uuid.uuid4()))},
+        {_sql_literal(result.get('request_id') or raw.get('request_id') or 'REQ-LIVE')},
+        {_sql_timestamp(log.get('query_time') or raw.get('query_time') or _kst_now_iso())},
+        {_sql_literal(question)},
+        {_sql_literal(generated_sql)},
+        {_sql_array(tables_accessed)},
+        {_sql_array(columns_returned)},
+        {row_count},
+        {_sql_literal(execution_status)},
+        {_sql_literal(success_reason)},
+        {_sql_literal(failure_reason)},
+        {_sql_literal(error_message)},
+        {runtime_ms},
+        {_sql_literal(result.get('effective_identity', {}).get('employee_id') if isinstance(result.get('effective_identity'), dict) else None)},
+        {_sql_literal(payload.get('role_id') or raw.get('role'))},
+        {_sql_literal(payload.get('department_name') or access.get('department'))},
+        {_sql_literal(permission_check)},
+        CAST(CURRENT_TIMESTAMP() AS TIMESTAMP_NTZ),
+        {_sql_literal(llm_answer)}
+    )
+    """
+
+    try:
+        _execute_sql(insert_sql)
+        return True
+    except Exception as error:
+        print(f"[RAG_UI_LOG_WRITE_ERROR] {str(error)[:500]}")
+        return False
+
+
 def _as_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -146,6 +328,7 @@ def _normalize_log_row(row: dict[str, Any]) -> dict[str, Any]:
     success_reason = _as_text(row.get("success_reason"), "")
     failure_reason = _as_text(row.get("failure_reason"), "")
     error_message = _as_text(row.get("error_message") or row.get("detail"), "")
+    llm_answer = _as_text(row.get("llm_answer"), "")
     permission_check = _as_text(row.get("permission_check") or row.get("chat_source") or row.get("source"), "-")
 
     return {
@@ -163,7 +346,8 @@ def _normalize_log_row(row: dict[str, Any]) -> dict[str, Any]:
         "chat_source": permission_check,
         "department": _as_text(row.get("department_id") or row.get("department_name") or row.get("department"), "-"),
         "clearance": _as_text(row.get("clearance") or row.get("security_clearance"), "-"),
-        "answer": success_reason or failure_reason or error_message,
+        "llm_answer": llm_answer,
+        "answer": llm_answer or success_reason or failure_reason or error_message,
         "raw": row,
     }
 

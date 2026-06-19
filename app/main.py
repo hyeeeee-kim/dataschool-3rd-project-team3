@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 from app.rag_service import call_direct_rag, direct_backend_configured
 from app.sql_log_service import fetch_sql_logs as fetch_databricks_sql_logs
+from app.sql_log_service import persist_sql_log as persist_databricks_sql_log
 
 
 load_dotenv()
@@ -290,6 +291,7 @@ def answer_payload(payload: dict[str, Any], mode: str) -> dict:
             default=str,
         ),
     )
+    persist_databricks_sql_log(response, payload, access)
     remember_live_result(response, payload, access)
     return response
 
