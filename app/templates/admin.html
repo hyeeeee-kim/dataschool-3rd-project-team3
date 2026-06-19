@@ -177,14 +177,6 @@
             </select>
           </label>
           <label>
-            채팅 출처
-            <select id="sqlSourceFilter">
-              <option value="">전체 출처</option>
-              <option value="user">공통 Chat</option>
-              <option value="admin_simulation">Admin Chat</option>
-            </select>
-          </label>
-          <label>
             테이블
             <input id="sqlTableFilter" type="search" placeholder="테이블명" />
           </label>
@@ -197,7 +189,6 @@
               <thead>
                 <tr>
                   <th>조회 시간</th>
-                  <th>채팅 출처</th>
                   <th>질문</th>
                   <th>Rows</th>
                   <th>Columns</th>
@@ -206,7 +197,7 @@
                 </tr>
               </thead>
               <tbody id="sqlLogRows">
-                <tr><td colspan="7">아직 로드된 로그가 없습니다.</td></tr>
+                <tr><td colspan="6">아직 로드된 로그가 없습니다.</td></tr>
               </tbody>
             </table>
           </div>

@@ -562,7 +562,6 @@ async function loadSqlLogs(page = 1) {
   const dateTo = document.getElementById("sqlDateTo").value;
   const role = document.getElementById("sqlRoleFilter").value;
   const status = document.getElementById("sqlStatusFilter").value;
-  const source = document.getElementById("sqlSourceFilter").value;
   const table = document.getElementById("sqlTableFilter").value.trim();
 
   if (dateFrom) {
@@ -578,9 +577,6 @@ async function loadSqlLogs(page = 1) {
   }
   if (status) {
     params.set("status", status);
-  }
-  if (source) {
-    params.set("source", source);
   }
   if (table) {
     params.set("table", table);
@@ -806,7 +802,7 @@ function renderSqlLogPagination(total) {
 function renderSqlLogs() {
   const target = document.getElementById("sqlLogRows");
   if (!sqlLogs.length) {
-    target.innerHTML = '<tr><td colspan="7">조건에 맞는 로그가 없습니다.</td></tr>';
+    target.innerHTML = '<tr><td colspan="6">조건에 맞는 로그가 없습니다.</td></tr>';
     return;
   }
 
@@ -815,7 +811,6 @@ function renderSqlLogs() {
     return `
       <tr data-index="${index}" class="${isExpanded ? "log-row-expanded" : ""}">
         <td>${escapeHtml(formatKoreanTime(log.query_time))}</td>
-        <td><span class="badge neutral">${escapeHtml(formatChatSource(log.chat_source))}</span></td>
         <td class="log-question-cell" title="${escapeHtml(formatLogQuestion(log))}">${escapeHtml(formatLogQuestionPreview(log))}</td>
         <td>${escapeHtml(String(log.row_count))}</td>
         <td>${escapeHtml(String(log.column_count))}</td>
@@ -840,7 +835,6 @@ function renderSqlLogDetail(log) {
   document.getElementById("sqlLogDetail").innerHTML = `
     <div class="detail-row"><span>Request ID</span><strong>${escapeHtml(log.request_id)}</strong></div>
     <div class="detail-row"><span>조회 시간</span><strong>${escapeHtml(formatKoreanTime(log.query_time))}</strong></div>
-    <div class="detail-row"><span>채팅 출처</span><strong>${escapeHtml(formatChatSource(log.chat_source))}</strong></div>
     <div class="detail-row"><span>질문</span><strong>${escapeHtml(formatLogQuestion(log))}</strong></div>
     <div class="detail-row"><span>Table</span><strong>${escapeHtml(log.table_name)}</strong></div>
     <div class="detail-row"><span>Rows</span><strong>${escapeHtml(String(log.row_count))}</strong></div>
@@ -855,7 +849,7 @@ function renderSqlLogConversation(log) {
   const answer = formatLogAnswer(log);
   return `
     <tr class="log-conversation-row">
-      <td colspan="7">
+      <td colspan="6">
         <section class="log-conversation">
           <div class="log-conversation-header">
             <strong>대화 기록</strong>
@@ -891,15 +885,4 @@ function formatLogQuestionPreview(log, maxLength = 42) {
 function formatLogAnswer(log) {
   const answer = log?.llm_answer || log?.answer || log?.response || log?.summary || "";
   return String(answer || "");
-}
-
-function formatChatSource(value) {
-  const source = String(value || "").toLowerCase();
-  if (source === "user") {
-    return "공통 Chat";
-  }
-  if (source === "admin_simulation") {
-    return "Admin Chat";
-  }
-  return value || "-";
 }
