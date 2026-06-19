@@ -107,63 +107,63 @@ def _query_dicts(sql: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _column_names(table_fqn: str) -> list[str]:
-    rows = _query_dicts(
-        f"""
-        SELECT column_name
-        FROM {CATALOG}.information_schema.columns
-        WHERE table_catalog = '{CATALOG}'
-          AND table_schema = 'governance'
-          AND table_name = 'rag_sql_query_logs'
-        ORDER BY ordinal_position
-        """
-    )
-    return [str(row.get("column_name", "")) for row in rows if row.get("column_name")]
+def _as_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if value in (None, ""):
+        return []
+    return [value]
 
 
-def _pick_column(columns: list[str], candidates: list[str]) -> str | None:
-    lowered = {column.lower(): column for column in columns}
-    for candidate in candidates:
-        column = lowered.get(candidate.lower())
-        if column:
-            return column
-    return None
+def _as_text(value: Any, default: str = "-") -> str:
+    if value in (None, ""):
+        return default
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(item) for item in value if item not in (None, "")) or default
+    return str(value)
 
 
-def _first_value(row: dict[str, Any], candidates: list[str], default: Any = None) -> Any:
-    for candidate in candidates:
-        if candidate in row and row.get(candidate) not in (None, ""):
-            return row.get(candidate)
-    return default
+def _as_int(value: Any, default: int = 0) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _normalize_log_row(row: dict[str, Any]) -> dict[str, Any]:
-    question = _first_value(row, ["question", "user_question", "query", "raw_question", "prompt"], "-")
-    table_name = _first_value(row, ["table_name", "table", "source_table", "target_table"], "-")
-    columns = row.get("columns") or row.get("column_names") or row.get("columns_returned") or []
-    if isinstance(columns, str):
-        columns = [item.strip() for item in columns.split(",") if item.strip()]
-    elif not isinstance(columns, list):
-        columns = []
-
-    query_time = _first_value(row, ["query_time", "created_at", "timestamp", "event_time", "logged_at"], _kst_now_iso())
+    tables_accessed = _as_list(row.get("tables_accessed"))
+    columns_returned = _as_list(row.get("columns_returned"))
+    query_time = row.get("query_time") or row.get("created_at") or _kst_now_iso()
+    execution_status = _as_text(row.get("execution_status") or row.get("status") or "UNKNOWN", "UNKNOWN")
+    user_question = _as_text(row.get("user_question") or row.get("question"), "-")
+    generated_sql = _as_text(row.get("generated_sql") or row.get("sql"), "")
+    success_reason = _as_text(row.get("success_reason"), "")
+    failure_reason = _as_text(row.get("failure_reason"), "")
+    error_message = _as_text(row.get("error_message") or row.get("detail"), "")
+    permission_check = _as_text(row.get("permission_check") or row.get("chat_source") or row.get("source"), "-")
 
     return {
-        "request_id": _first_value(row, ["request_id", "id", "query_id"], "REQ-LIVE"),
+        "request_id": _as_text(row.get("request_id") or row.get("log_id") or row.get("query_id"), "REQ-LIVE"),
         "query_time": str(query_time),
-        "question": str(question or "-"),
-        "table_name": str(table_name or "-"),
-        "row_count": int(_first_value(row, ["row_count", "row_count_returned", "rows"], 0) or 0),
-        "column_count": int(_first_value(row, ["column_count"], len(columns)) or len(columns)),
-        "columns": columns,
-        "actor": str(_first_value(row, ["actor", "role_id", "user_id", "role"], "-") or "-"),
-        "status": str(_first_value(row, ["status", "guard_status", "result_status"], "UNKNOWN") or "UNKNOWN"),
-        "sql": str(_first_value(row, ["sql", "generated_sql", "statement_text"], "") or ""),
-        "blocked": bool(row.get("blocked") or str(_first_value(row, ["status", "guard_status"], "")).upper() in {"BLOCKED", "DENIED", "ERROR"}),
-        "chat_source": str(_first_value(row, ["chat_source", "source", "mode"], "-") or "-"),
-        "department": str(_first_value(row, ["department", "department_name"], "-") or "-"),
-        "clearance": str(_first_value(row, ["clearance", "security_clearance"], "-") or "-"),
-        "answer": str(_first_value(row, ["answer", "response", "summary"], "") or ""),
+        "question": user_question,
+        "table_name": ", ".join(str(item) for item in tables_accessed) if tables_accessed else "-",
+        "row_count": _as_int(row.get("row_count_returned") or row.get("row_count") or row.get("rows")),
+        "column_count": _as_int(row.get("column_count"), len(columns_returned)) if columns_returned else _as_int(row.get("column_count")),
+        "columns": columns_returned,
+        "actor": _as_text(row.get("role_id") or row.get("user_id") or row.get("actor") or row.get("role"), "-"),
+        "status": execution_status,
+        "sql": generated_sql,
+        "blocked": bool(row.get("blocked") or execution_status.upper() in {"BLOCKED", "DENIED", "ERROR", "FAILED", "FAILURE"}),
+        "chat_source": permission_check,
+        "department": _as_text(row.get("department_id") or row.get("department_name") or row.get("department"), "-"),
+        "clearance": _as_text(row.get("clearance") or row.get("security_clearance"), "-"),
+        "answer": success_reason or failure_reason or error_message,
         "raw": row,
     }
 
@@ -187,26 +187,18 @@ def fetch_sql_logs(
     date_from: str = "",
     date_to: str = "",
 ) -> dict[str, Any]:
-    if not direct_backend_configured():
+    warehouse_id = _warehouse_id()
+    if not warehouse_id:
         return {"source": "unconfigured", "logs": []}
 
-    try:
-        _query_dicts(
-            f"""
-            SELECT 1
-            FROM {CATALOG}.information_schema.tables
-            WHERE table_schema = 'governance'
-              AND table_name = 'rag_sql_query_logs'
-            LIMIT 1
-            """
-        )
-    except Exception:
-        return {"source": "missing_table", "logs": []}
-
-    columns = _column_names(LOG_TABLE)
-    order_column = _pick_column(columns, ["query_time", "created_at", "timestamp", "event_time", "logged_at", "request_time"])
-    order_sql = f"ORDER BY {order_column} DESC" if order_column else ""
-    rows = _query_dicts(f"SELECT * FROM {LOG_TABLE} {order_sql} LIMIT {MAX_LOG_ROWS}")
+    rows = _query_dicts(
+        f"""
+        SELECT *
+        FROM {LOG_TABLE}
+        ORDER BY COALESCE(query_time, created_at) DESC
+        LIMIT {MAX_LOG_ROWS}
+        """
+    )
     normalized = [_normalize_log_row(row) for row in rows]
 
     filtered = []
