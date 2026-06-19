@@ -71,7 +71,7 @@
 
 이 프로젝트는 Databricks Apps 배포를 기준으로 사용됩니다.
 
-#### 권한 이슈 발생 시 앱 서비스 프린시펄 권한을 점검 필요
+#### 권한 이슈 발생 시 앱 서비스 프린시펄 권한 점검 필요
 - SQL Warehouse 사용 권한
 - Unity Catalog 테이블 조회 권한
 - Vector Search Index 사용 권한
