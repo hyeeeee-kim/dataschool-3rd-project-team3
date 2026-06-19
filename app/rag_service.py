@@ -221,6 +221,10 @@ def _query_dicts(sql: str) -> list[dict[str, Any]]:
     return rows
 
 
+def execute_sql(statement_text: str) -> tuple[list[str], list[dict[str, Any]]]:
+    return _execute_sql(statement_text)
+
+
 def _extract_sql(text: str) -> str:
     matched = re.search(r"```sql\s*(.*?)\s*```", text, re.DOTALL)
     return matched.group(1).strip() if matched else text.strip()
