@@ -1,6 +1,6 @@
-# COSBELLE RAG Console
+# Enterprise RAG-based LLM System
 
-역할 기반(RBAC)으로 질의 범위를 제어하는 FastAPI 기반 RAG 콘솔 프로젝트입니다.
+역할 기반(RBAC)으로 질의 범위를 제어하는 FastAPI 기반 사내 LLM 구축 프로젝트입니다.
 
 ## Main Image
 ![Main Image](docs/images/main.png)
