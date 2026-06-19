@@ -805,11 +805,11 @@ function renderSqlLogs() {
     return `
       <tr data-index="${index}" class="${isExpanded ? "log-row-expanded" : ""}">
         <td>${escapeHtml(formatKoreanTime(log.query_time))}</td>
+        <td><span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status)}</span></td>
+        <td>${escapeHtml(log.actor)}</td>
         <td class="log-question-cell" title="${escapeHtml(formatLogQuestion(log))}">${escapeHtml(formatLogQuestionPreview(log))}</td>
         <td>${escapeHtml(String(log.row_count))}</td>
         <td>${escapeHtml(String(log.column_count))}</td>
-        <td>${escapeHtml(log.actor)}</td>
-        <td><span class="badge ${getStatusBadgeClass(log.status)}">${escapeHtml(log.status)}</span></td>
       </tr>
       ${isExpanded ? renderSqlLogConversation(log) : ""}
     `;
