@@ -49,37 +49,67 @@
     </header>
 
     <section id="overview" class="view active">
-      <div class="poster-hero">
-        <div class="poster-title">
-          <span>ADMIN UI</span>
-          <h2>챗봇, 출처 공개, 운영 대시보드를 한 화면 흐름으로 연결합니다.</h2>
-        </div>
-        <div class="poster-block lime">
-          <span>Admin query</span>
-          <strong>Admin Chat</strong>
-        </div>
-        <div class="poster-block sky">
-          <span>Admin display</span>
-          <strong>Sources</strong>
-        </div>
-        <div class="poster-block ink">
-          <span>Log / Dashboard</span>
-          <strong>SQL / BI</strong>
+      <div class="overview-intro panel">
+        <div class="overview-symbol" aria-hidden="true"></div>
+        <div>
+          <h2>Overview</h2>
+          <p>
+            COSBELLE RAG Admin은 가상 코스메틱 제조사의 업무 데이터와 문서를 기반으로,
+            Role과 보안 등급에 맞는 RAG 응답을 제공하는 엔터프라이즈 LLM Agent 운영 화면입니다.
+            관리자는 질의, 출처, 권한 체크, 로그와 대시보드를 한 흐름에서 확인할 수 있습니다.
+          </p>
         </div>
       </div>
 
-      <div class="requirement-grid">
-        <article class="result-card accent-lime">
-          <h3>관리자 display</h3>
-          <p>DB, table, document citation source</p>
+      <div class="overview-divider"></div>
+
+      <div class="overview-section-heading">
+        <h2>Admin Foundations</h2>
+        <span>RBAC 기반 RAG 운영을 위한 핵심 화면</span>
+      </div>
+
+      <div class="overview-card-grid">
+        <article class="overview-card tone-violet overview-link-card" data-target="simulator" tabindex="0" role="button" aria-label="Admin Chat으로 이동">
+          <div class="overview-card-visual bars" aria-hidden="true"></div>
+          <div class="overview-card-body">
+            <h3>Admin Chat</h3>
+            <p>Role, Pre-check, Post-check 조건을 바꿔가며 RAG 응답과 차단 여부를 검증합니다.</p>
+          </div>
         </article>
-        <article class="result-card accent-sky">
-          <h3>권한 기반 질의</h3>
-          <p>Role, clearance, pre/post check</p>
+        <article class="overview-card tone-sky overview-link-card" data-target="adminDisplay" tabindex="0" role="button" aria-label="Admin Sources로 이동">
+          <div class="overview-card-visual stack" aria-hidden="true"></div>
+          <div class="overview-card-body">
+            <h3>Admin Sources</h3>
+            <p>응답에 사용된 DB table, document citation, guard 결과를 관리자 관점에서 확인합니다.</p>
+          </div>
         </article>
-        <article class="result-card accent-ink">
-          <h3>운영 관리</h3>
-          <p>LLM dashboard, DB dashboard, SQL logs</p>
+        <article class="overview-card tone-lime overview-link-card" data-target="dashboard" tabindex="0" role="button" aria-label="Dashboards로 이동">
+          <div class="overview-card-visual grid" aria-hidden="true"></div>
+          <div class="overview-card-body">
+            <h3>Dashboards</h3>
+            <p>Role별 접근 가능 데이터와 운영 지표를 대시보드 형태로 비교합니다.</p>
+          </div>
+        </article>
+        <article class="overview-card tone-rose">
+          <div class="overview-card-visual pulse" aria-hidden="true"></div>
+          <div class="overview-card-body">
+            <h3>SQL Logs</h3>
+            <p>조회 시간, 질문, 실행 주체, 상태, SQL 상세를 기록하고 추적합니다.</p>
+          </div>
+        </article>
+        <article class="overview-card tone-ink">
+          <div class="overview-card-visual shield" aria-hidden="true"></div>
+          <div class="overview-card-body">
+            <h3>Access Control</h3>
+            <p>사용자 Role과 clearance를 기준으로 허용된 데이터만 조회되도록 검증합니다.</p>
+          </div>
+        </article>
+        <article class="overview-card tone-blue">
+          <div class="overview-card-visual route" aria-hidden="true"></div>
+          <div class="overview-card-body">
+            <h3>RAG Operations</h3>
+            <p>Databricks Job 또는 API 백엔드와 연결해 검색, 답변 생성, 운영 로그를 관리합니다.</p>
+          </div>
         </article>
       </div>
     </section>

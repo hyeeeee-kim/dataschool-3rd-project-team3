@@ -25,6 +25,16 @@ if (sideNav) {
   });
 }
 
+document.querySelectorAll(".overview-link-card").forEach((card) => {
+  card.addEventListener("click", () => showView(card.dataset.target));
+  card.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      showView(card.dataset.target);
+    }
+  });
+});
+
 document.getElementById("simulateForm").addEventListener("submit", (event) => {
   event.preventDefault();
   simulate();
@@ -62,7 +72,10 @@ function showView(id, button) {
   document.querySelectorAll(".side-nav button").forEach((navButton) => navButton.classList.remove("active"));
 
   document.getElementById(id).classList.add("active");
-  button.classList.add("active");
+  const activeButton = button || document.querySelector(`.side-nav button[data-target="${id}"]`);
+  if (activeButton) {
+    activeButton.classList.add("active");
+  }
   document.getElementById("pageTitle").textContent = titles[id] || "Admin Console";
 
   if (id === "dashboard") {
