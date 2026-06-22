@@ -701,11 +701,13 @@ textarea {
 .chat-bubble::before {
   content: "";
   position: absolute;
-  bottom: -7px;
-  width: 17px;
-  height: 17px;
+  bottom: -8px;
+  width: 25px;
+  height: 20px;
   background: inherit;
-  transform: rotate(38deg) skew(-8deg);
+  border-radius: 2px 0 15px 5px;
+  transform: skewY(27deg) rotate(4deg);
+  transform-origin: top left;
 }
 
 .chat-bubble::after {
@@ -728,7 +730,7 @@ textarea {
 }
 
 .chat-bubble-primary::before {
-  left: 12px;
+  left: 13px;
 }
 
 .chat-bubble-secondary {
@@ -739,7 +741,10 @@ textarea {
 }
 
 .chat-bubble-secondary::before {
-  right: 12px;
+  right: 13px;
+  border-radius: 0 2px 5px 15px;
+  transform: scaleX(-1) skewY(27deg) rotate(4deg);
+  transform-origin: top right;
 }
 
 .overview-card-visual.stack::before,
