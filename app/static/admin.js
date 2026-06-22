@@ -6,6 +6,8 @@ const titles = {
   simulator: "Admin Chat"
 };
 
+const adminViewIds = new Set(Object.keys(titles));
+
 let lastResponse = null;
 let sqlLogs = [];
 let sqlLogPage = 1;
@@ -67,7 +69,11 @@ document.getElementById("logoutButton").addEventListener("click", () => {
   window.location.href = "/admin-login";
 });
 
-function showView(id, button) {
+function showView(id, button, options = {}) {
+  if (!adminViewIds.has(id) || !document.getElementById(id)) {
+    id = "overview";
+  }
+
   document.querySelectorAll(".view").forEach((section) => section.classList.remove("active"));
   document.querySelectorAll(".side-nav button").forEach((navButton) => navButton.classList.remove("active"));
 
@@ -77,6 +83,10 @@ function showView(id, button) {
     activeButton.classList.add("active");
   }
   document.getElementById("pageTitle").textContent = titles[id] || "Admin Console";
+
+  if (options.updateHistory !== false && window.history.state?.adminView !== id) {
+    window.history.pushState({adminView: id}, "", `${window.location.pathname}#${id}`);
+  }
 
   if (id === "dashboard") {
     loadDashboards();
@@ -88,6 +98,23 @@ function showView(id, button) {
     loadSqlLogs(1);
   }
 }
+
+const initialAdminView = adminViewIds.has(window.location.hash.slice(1))
+  ? window.location.hash.slice(1)
+  : "overview";
+window.history.replaceState({adminView: initialAdminView}, "", `${window.location.pathname}#${initialAdminView}`);
+showView(initialAdminView, null, {updateHistory: false});
+
+window.addEventListener("popstate", (event) => {
+  const historyView = event.state?.adminView;
+  const hashView = window.location.hash.slice(1);
+  const targetView = adminViewIds.has(historyView)
+    ? historyView
+    : adminViewIds.has(hashView)
+      ? hashView
+      : "overview";
+  showView(targetView, null, {updateHistory: false});
+});
 
 function setSelectValue(selectId, value) {
   const select = document.getElementById(selectId);

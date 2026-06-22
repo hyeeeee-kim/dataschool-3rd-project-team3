@@ -71,8 +71,12 @@
       <div class="overview-card-grid">
         <article class="overview-card tone-violet overview-link-card" data-target="simulator" tabindex="0" role="button" aria-label="Admin Chat으로 이동">
           <div class="overview-card-visual chat-bubbles" aria-hidden="true">
-            <span class="chat-bubble chat-bubble-primary"></span>
-            <span class="chat-bubble chat-bubble-secondary"></span>
+            <svg class="overview-chat-icon" viewBox="0 0 120 76">
+              <path d="M22 8h76c11 0 20 9 20 20v18c0 11-9 20-20 20H57L33 76V66H22C11 66 2 57 2 46V28C2 17 11 8 22 8Z"></path>
+              <circle class="chat-dot" cx="42" cy="37" r="6"></circle>
+              <circle class="chat-dot" cx="60" cy="37" r="6"></circle>
+              <circle class="chat-dot" cx="78" cy="37" r="6"></circle>
+            </svg>
           </div>
           <div class="overview-card-body">
             <h3>Admin Chat</h3>
@@ -326,7 +330,7 @@
     </section>
   </main>
 
-  <script src="/static/admin.js?v=tab-fix-2"></script>
+  <script src="/static/admin.js?v=admin-history-1"></script>
   <script src="/static/data_dashboard.js?v=1"></script>
 </body>
 </html>
