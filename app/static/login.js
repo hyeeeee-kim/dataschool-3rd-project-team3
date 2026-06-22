@@ -14,6 +14,6 @@ document.getElementById("loginForm").addEventListener("submit", async (event) =>
 
   if (data.ok) {
     sessionStorage.setItem("cosbelle_admin", "true");
-    window.location.href = data.redirect;
+    window.location.replace(data.redirect);
   }
 });
