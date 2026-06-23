@@ -13,7 +13,7 @@ from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 
 
 CATALOG = os.getenv("RAG_SQL_CATALOG", "cos_adb")
-LLM_MODEL = os.getenv("RAG_LLM_MODEL", "databricks-qwen3-next-80b-a3b-instruct")
+LLM_MODEL = os.getenv("RAG_LLM_MODEL", "databricks-claude-sonnet-4-5")
 VS_INDEX_NAME = os.getenv("RAG_VS_INDEX_NAME", "cos_adb.search.metadata_chunks_index")
 SQL_TIMEOUT_SECONDS = int(os.getenv("DIRECT_SQL_TIMEOUT_SECONDS", "45"))
 
@@ -48,6 +48,8 @@ PROMPT_SQL_GENERATION = """You are a Databricks SQL expert for '{catalog}' Unity
 
 ## Key Column Reference
 - cos_adb.silver.events: event_id, event_type, product_id, product_name, batch_id, owner_employee_id, owner_name, affected_departments, start_date, quarter, season, business_cycle, campaign_period, status, business_impact
+- cos_adb.governance.access_policies: role_id, system_name, notes, policy_id
+- IMPORTANT: access_policies does NOT have table_id. Never join access_policies on table_id.
 - 도메인 전용 테이블(qa_*, mfg_*, rnd_* 등): [Context] 컬럼목록 참고.
 {error_section}"""
 
