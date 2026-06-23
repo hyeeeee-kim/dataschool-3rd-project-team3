@@ -1,5 +1,5 @@
 (function () {
-  const colors = ["#5b43d6", "#18a05f", "#f59e0b", "#0ea5e9", "#ef476f", "#64748b", "#14b8a6"];
+  const colors = ["#5b43d6", "#18a05f", "#f59e0b", "#0ea5e9", "#ef476f", "#64748b", "#14b8a6", "#a855f7", "#84cc16", "#f97316", "#06b6d4", "#dc2626"];
 
   function esc(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -138,7 +138,7 @@
   }
 
   function renderDonut(rows) {
-    const items = rows.slice(0, 6).map((row) => ({ label: metricLabel(row), value: metricValue(row) }));
+    const items = rows.map((row) => ({ label: metricLabel(row), value: metricValue(row) }));
     const total = items.reduce((sum, item) => sum + item.value, 0) || 1;
     let cursor = 0;
     const gradient = items.map((item, index) => {

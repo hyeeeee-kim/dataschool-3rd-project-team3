@@ -158,9 +158,9 @@
 
 .data-donut-wrap {
   display: grid;
-  grid-template-columns: 150px 1fr;
+  grid-template-columns: 150px minmax(0, 1fr);
   gap: 18px;
-  align-items: center;
+  align-items: start;
 }
 
 .data-donut {
@@ -202,6 +202,9 @@
 .data-legend {
   display: grid;
   gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .data-legend-row {
